@@ -24,4 +24,37 @@ function M.location(inst, state)
 	return location
 end
 
+---Format a picker row using only the existing pane snapshot.
+---@param inst wiremux.Instance
+---@param state wiremux.State
+---@param action string
+---@param name string
+---@return string
+function M.format_label(inst, state, action, name)
+	local marker = action == "send" and "" or "[" .. action .. "]"
+	local label = string.format("%-10s %-6s %s", marker, M.location(inst, state), name)
+	local window = inst.window_name
+	if window and window ~= "" and window ~= name then
+		label = label .. " · " .. window
+	end
+	local command = inst.running_command
+	if command and command ~= "" and command ~= name and command ~= window then
+		label = label .. " [" .. command .. "]"
+	end
+	return label
+end
+
+---@param inst wiremux.Instance
+---@return string
+function M.adoption_name(inst)
+	local name = inst.target
+	if not name or name == "" or name == M.default_target_name(inst) then
+		name = inst.running_command
+	end
+	if not name or name == "" then
+		name = "pane"
+	end
+	return name
+end
+
 return M

@@ -419,6 +419,175 @@ describe("action", function()
 	end)
 
 	describe("adopt", function()
+		describe("default rows", function()
+			local target, state, labels, reads
+
+			before_each(function()
+				target = {
+					id = "%1",
+					managed = false,
+					session_id = "$1",
+					kind = "pane",
+					window_index = 2,
+					pane_index = 1,
+					window_name = "dev",
+					running_command = "node",
+				}
+				state = { origin_pane_id = "%0", session_id = "$1", instances = {}, panes = { target } }
+				labels, reads = {}, 0
+				mocks.backend.state.get = function()
+					reads = reads + 1
+					return state
+				end
+				mocks.backend.adopt = function()
+					error("cancellation must not adopt")
+				end
+				mocks.backend.send = function()
+					error("standalone adoption must not send")
+				end
+				mocks.picker.select = function(items, opts, choose)
+					for _, item in ipairs(items) do
+						labels[item.id] = opts.format_item(item)
+						assert.are.equal(labels[item.id], opts.format_item(item))
+					end
+					choose(nil)
+				end
+			end)
+
+			it("uses the same pane and window layout without extra discovery or mutation", function()
+				local before = vim.deepcopy(state)
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[adopt]    2:1    node · dev", labels["%1"])
+				assert.are.equal(1, reads)
+				assert.are.same(before, state)
+			end)
+
+			it("marks targets already owned by this pane", function()
+				target.managed, target.origin, target.target = true, "%0", "terminal"
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[yours]    2:1    terminal · dev [node]", labels["%1"])
+			end)
+
+			it("distinguishes a confirmed orphan from a live foreign owner", function()
+				target.managed, target.orphaned, target.origin, target.target = true, true, "%9", "terminal"
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[re-adopt] 2:1    terminal · dev [node]", labels["%1"])
+			end)
+
+			it("shows a foreign owner's location even when session filtering hides it", function()
+				target.managed, target.origin, target.target = true, "%9", "terminal"
+				table.insert(state.panes, { id = "%9", session_id = "$2", window_index = 4, pane_index = 0 })
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[reassign] 2:1    terminal · dev [node] (owner $2:4:0)", labels["%1"])
+				assert.is_nil(labels["%9"])
+				assert.are.equal(1, reads)
+			end)
+
+			it("shows an owner's location when a custom filter hides it from the current snapshot", function()
+				target.managed, target.origin = true, "%9"
+				table.insert(state.panes, { id = "%9", session_id = "$1", window_index = 4, pane_index = 0 })
+
+				require("wiremux.action.adopt").adopt({
+					filter = {
+						instances = function(inst)
+							return inst.id == "%1"
+						end,
+					},
+				})
+
+				assert.are.equal("[reassign] 2:1    node · dev (owner 4:0)", labels["%1"])
+				assert.is_nil(labels["%9"])
+			end)
+
+			it("finds the owner in legacy instances even when a custom filter hides it", function()
+				target.managed, target.origin = true, "%9"
+				state.instances = { target, { id = "%9", session_id = "$1", window_index = 4, pane_index = 0 } }
+				state.panes = nil
+
+				require("wiremux.action.adopt").adopt({
+					filter = {
+						instances = function(inst)
+							return inst.id == "%1"
+						end,
+					},
+				})
+
+				assert.are.equal("[reassign] 2:1    node · dev (owner 4:0)", labels["%1"])
+				assert.is_nil(labels["%9"])
+			end)
+
+			it("does not infer an orphan from an unverified missing owner", function()
+				target.managed, target.origin = true, "%9"
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[reassign] 2:1    node · dev (owner %9, unverified)", labels["%1"])
+				assert.is_nil(target.orphaned)
+			end)
+
+			it("does not treat absent owner and current-pane metadata as already yours", function()
+				target.managed = true
+				state.origin_pane_id = nil
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[adopt]    2:1    node · dev (owner unknown)", labels["%1"])
+			end)
+
+			it("ignores leftover ownership metadata on unmanaged panes", function()
+				target.origin = "%9"
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[adopt]    2:1    node · dev", labels["%1"])
+			end)
+
+			it("hides generated target names and duplicate window or command hints", function()
+				target.target, target.window_name = "pane-1", "node"
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[adopt]    2:1    node", labels["%1"])
+			end)
+
+			it("uses a pane fallback when names and commands are empty", function()
+				target.target, target.running_command, target.window_name = "", "", ""
+
+				require("wiremux.action.adopt").adopt()
+
+				assert.are.equal("[adopt]    2:1    pane", labels["%1"])
+			end)
+
+			it("passes the selected foreign-owned pane to adoption without sending", function()
+				local adoptions = 0
+				target.managed, target.origin = true, "%9"
+				mocks.backend.adopt = function(selected, snapshot, opts)
+					assert.are.equal(target, selected)
+					assert.are.equal(state, snapshot)
+					assert.are.equal("terminal", opts.target)
+					adoptions = adoptions + 1
+					return true
+				end
+				mocks.picker.select = function(items, opts, choose)
+					assert.are.equal("[reassign] 2:1    node · dev (owner %9, unverified)", opts.format_item(items[1]))
+					choose(items[1])
+				end
+
+				require("wiremux.action.adopt").adopt({ target = "terminal" })
+
+				assert.are.equal(1, adoptions)
+				assert.are.equal(1, reads)
+			end)
+		end)
+
 		it("shows all current-session panes", function()
 			local adopted
 
@@ -479,8 +648,8 @@ describe("action", function()
 				assert.are.equal(2, #items)
 				assert.are.equal("%1", items[1].id)
 				assert.are.equal("%3", items[2].id)
-				assert.matches("server%s+1:1%s+%%1%s+zsh", opts.format_item(items[1]))
-				assert.matches("%(unmanaged%)%s+2:0%s+%%3%s+fish", opts.format_item(items[2]))
+				assert.are.equal("[adopt]    1:1    server [zsh]", opts.format_item(items[1]))
+				assert.are.equal("[adopt]    2:0    fish", opts.format_item(items[2]))
 				callback(items[1])
 			end
 
@@ -556,7 +725,7 @@ describe("action", function()
 				assert.are.equal("%1", items[1].id)
 				assert.are.equal("%2", items[2].id)
 				assert.are.equal("%3", items[3].id)
-				assert.matches("%(unmanaged%)%s+%$2:3%s+%%3%s+zsh", opts.format_item(items[3]))
+				assert.are.equal("[adopt]    $2:3   zsh", opts.format_item(items[3]))
 				callback(items[3])
 			end
 

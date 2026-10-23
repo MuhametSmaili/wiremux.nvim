@@ -1,8 +1,6 @@
 local M = {}
 local instance = require("wiremux.core.instance")
 
-local DEFAULT_LABEL_FORMAT = "%-18s %-6s %-5s"
-
 ---@class wiremux.action.AdoptOpts
 ---@field target? string Target name to assign when adopting unmanaged panes. Defaults to pane-<id>.
 ---@field filter? { instances?: fun(inst: wiremux.Instance, state: wiremux.State): boolean }
@@ -18,14 +16,26 @@ end
 
 ---@param inst wiremux.Instance
 ---@param state wiremux.State
+---@param panes_by_id table<string, wiremux.Instance>
 ---@return string
-local function default_format_item(inst, state)
-	local label =
-		string.format(DEFAULT_LABEL_FORMAT, inst.target or "(unmanaged)", instance.location(inst, state), inst.id)
-	if inst.running_command and inst.running_command ~= "" then
-		label = label .. " " .. inst.running_command
+local function default_format_item(inst, state, panes_by_id)
+	local action, ownership = "adopt", nil
+	if inst.managed then
+		if inst.orphaned then
+			action = "re-adopt"
+		elseif inst.origin and inst.origin == state.origin_pane_id then
+			action = "yours"
+		elseif inst.origin then
+			action = "reassign"
+			local owner = panes_by_id[inst.origin]
+			ownership = owner and ("owner " .. instance.location(owner, state))
+				or ("owner " .. inst.origin .. ", unverified")
+		else
+			ownership = "owner unknown"
+		end
 	end
-	return label
+	local label = instance.format_label(inst, state, action, instance.adoption_name(inst))
+	return ownership and (label .. " (" .. ownership .. ")") or label
 end
 
 ---@param inst wiremux.Instance
@@ -72,7 +82,17 @@ function M.adopt(opts)
 		return
 	end
 
-	local format_item = opts.format_item or default_format_item
+	local format_item = opts.format_item
+	if not format_item then
+		-- Use the full snapshot: an owner may be outside the candidate filter or session.
+		local panes_by_id = {}
+		for _, pane in ipairs(st.panes or st.instances) do
+			panes_by_id[pane.id] = pane
+		end
+		format_item = function(inst, state)
+			return default_format_item(inst, state, panes_by_id)
+		end
+	end
 	local picker = require("wiremux.picker")
 	picker.select(panes, {
 		prompt = "Adopt target",

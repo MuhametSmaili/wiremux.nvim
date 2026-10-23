@@ -117,25 +117,6 @@ local function filter_definitions(definitions, action_filter)
 	return filtered
 end
 
----@param inst wiremux.Instance
----@param state wiremux.State
----@param action string
----@param name string
----@return string
-local function format_instance_label(inst, state, action, name)
-	local marker = action == "send" and "" or "[" .. action .. "]"
-	local label = string.format("%-10s %-6s %s", marker, instance.location(inst, state), name)
-	local window = inst.window_name
-	if window and window ~= "" and window ~= name then
-		label = label .. " · " .. window
-	end
-	local command = inst.running_command
-	if command and command ~= "" and command ~= name and command ~= window then
-		label = label .. " [" .. command .. "]"
-	end
-	return label
-end
-
 ---Get display name for instance
 ---@param inst wiremux.ManagedInstance
 ---@param def wiremux.target.definition?
@@ -146,7 +127,7 @@ end
 local function get_display_name(inst, def, index, state, action)
 	action = action or "managed"
 	if not def and inst.target == instance.default_target_name(inst) then
-		return format_instance_label(inst, state, action, inst.running_command or "adopted")
+		return instance.format_label(inst, state, action, inst.running_command or "adopted")
 	end
 
 	local configured_label = def and def.label or nil
@@ -168,7 +149,7 @@ local function get_display_name(inst, def, index, state, action)
 		name = inst.target
 	end
 
-	return format_instance_label(inst, state, action, name)
+	return instance.format_label(inst, state, action, name)
 end
 
 ---@param instances wiremux.ManagedInstance[]
@@ -204,14 +185,7 @@ end
 ---@param state wiremux.State
 ---@return string
 local function get_adopt_display_name(inst, state)
-	local name = inst.target
-	if not name or name == "" or name == instance.default_target_name(inst) then
-		name = inst.running_command
-	end
-	if not name or name == "" then
-		name = "pane"
-	end
-	return format_instance_label(inst, state, inst.orphaned and "re-adopt" or "adopt", name)
+	return instance.format_label(inst, state, inst.orphaned and "re-adopt" or "adopt", instance.adoption_name(inst))
 end
 
 ---@param instances wiremux.Instance[]
