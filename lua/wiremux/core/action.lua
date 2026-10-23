@@ -11,6 +11,7 @@ end
 
 ---@class wiremux.action.RunOpts
 ---@field prompt string
+---@field instance_action? "send"|"focus"|"close"|"toggle" Display-only action for managed rows.
 ---@field behavior wiremux.action.Behavior
 ---@field mode? wiremux.ResolveMode
 ---@field filter? wiremux.config.FilterConfig
@@ -118,6 +119,7 @@ function M.run(opts, callbacks)
 
 	local result = resolver.resolve(state, config.opts.targets.definitions, {
 		allow_adopt = callbacks.on_adopt ~= nil,
+		instance_action = opts.instance_action,
 		behavior = opts.behavior,
 		mode = opts.mode,
 		filter = opts.filter,

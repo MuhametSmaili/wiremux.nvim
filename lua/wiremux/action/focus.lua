@@ -14,6 +14,7 @@ function M.focus(opts)
 
 	action.run({
 		prompt = "Focus",
+		instance_action = "focus",
 		behavior = opts.behavior or config.opts.actions.focus.behavior or "last",
 		mode = "instances",
 		filter = opts.filter,

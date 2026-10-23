@@ -19,6 +19,7 @@ function M.toggle(opts)
 
 	action.run({
 		prompt = "Toggle",
+		instance_action = "toggle",
 		behavior = "last",
 		mode = opts.mode or "auto",
 		filter = opts.filter,

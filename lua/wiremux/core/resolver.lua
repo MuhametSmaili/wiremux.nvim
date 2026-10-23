@@ -9,6 +9,7 @@ local instance = require("wiremux.core.instance")
 ---@field filter? wiremux.config.FilterConfig
 ---@field target? string Target definition name for explicit targeting
 ---@field allow_adopt? boolean Internal action capability; adoption candidates are never queried without it.
+---@field instance_action? "send"|"focus"|"close"|"toggle" Display-only action for managed rows.
 
 ---@class wiremux.ResolveItem.Instance
 ---@field type "instance"
@@ -116,15 +117,36 @@ local function filter_definitions(definitions, action_filter)
 	return filtered
 end
 
+---@param inst wiremux.Instance
+---@param state wiremux.State
+---@param action string
+---@param name string
+---@return string
+local function format_instance_label(inst, state, action, name)
+	local marker = action == "send" and "" or "[" .. action .. "]"
+	local label = string.format("%-10s %-6s %s", marker, instance.location(inst, state), name)
+	local window = inst.window_name
+	if window and window ~= "" and window ~= name then
+		label = label .. " · " .. window
+	end
+	local command = inst.running_command
+	if command and command ~= "" and command ~= name and command ~= window then
+		label = label .. " [" .. command .. "]"
+	end
+	return label
+end
+
 ---Get display name for instance
 ---@param inst wiremux.ManagedInstance
 ---@param def wiremux.target.definition?
 ---@param index number
 ---@param state wiremux.State
+---@param action? string
 ---@return string
-local function get_display_name(inst, def, index, state)
+local function get_display_name(inst, def, index, state, action)
+	action = action or "managed"
 	if not def and inst.target == instance.default_target_name(inst) then
-		return string.format("[m] %-6s %s", instance.location(inst, state), inst.running_command or "adopted")
+		return format_instance_label(inst, state, action, inst.running_command or "adopted")
 	end
 
 	local configured_label = def and def.label or nil
@@ -146,17 +168,14 @@ local function get_display_name(inst, def, index, state)
 		name = inst.target
 	end
 
-	local label = string.format("[m] %-6s %s", instance.location(inst, state), name)
-	if inst.running_command and inst.running_command ~= "" then
-		label = label .. string.format(" [%s]", inst.running_command)
-	end
-	return label
+	return format_instance_label(inst, state, action, name)
 end
 
 ---@param instances wiremux.ManagedInstance[]
 ---@param state wiremux.State
+---@param action? string
 ---@return wiremux.ResolveItem.Instance[]
-local function build_instance_items(instances, state)
+local function build_instance_items(instances, state, action)
 	local config = require("wiremux.config")
 	local definitions = (config.opts.targets and config.opts.targets.definitions) or {}
 
@@ -169,7 +188,7 @@ local function build_instance_items(instances, state)
 			counts[target] = counts[target] + 1
 
 			local def = definitions[target]
-			local label = get_display_name(inst, def, counts[target], state)
+			local label = get_display_name(inst, def, counts[target], state, action)
 
 			return {
 				type = "instance",
@@ -185,11 +204,14 @@ end
 ---@param state wiremux.State
 ---@return string
 local function get_adopt_display_name(inst, state)
-	local label = string.format("[~] %-6s", instance.location(inst, state))
-	if inst.running_command and inst.running_command ~= "" then
-		label = label .. " " .. inst.running_command
+	local name = inst.target
+	if not name or name == "" or name == instance.default_target_name(inst) then
+		name = inst.running_command
 	end
-	return label
+	if not name or name == "" then
+		name = "pane"
+	end
+	return format_instance_label(inst, state, inst.orphaned and "re-adopt" or "adopt", name)
 end
 
 ---@param instances wiremux.Instance[]
@@ -228,7 +250,7 @@ local function build_definition_items(definitions)
 				type = "definition",
 				target = name,
 				def = def,
-				label = "[+] " .. name,
+				label = string.format("%-10s %-6s %s", "[+]", "", name),
 			}
 		end)
 		:totable()
@@ -249,8 +271,9 @@ end
 ---@param instances wiremux.ManagedInstance[]
 ---@param behavior wiremux.action.Behavior
 ---@param state wiremux.State
+---@param action? string
 ---@return wiremux.ResolveResult
-local function resolve_by_behavior(instances, behavior, state)
+local function resolve_by_behavior(instances, behavior, state, action)
 	if behavior == "all" then
 		return targets_result(instances)
 	end
@@ -267,7 +290,7 @@ local function resolve_by_behavior(instances, behavior, state)
 		end
 	end
 
-	return pick_result(build_instance_items(sort_instances(instances), state))
+	return pick_result(build_instance_items(sort_instances(instances), state, action))
 end
 
 ---Resolve when an explicit target name is provided.
@@ -285,7 +308,7 @@ local function resolve_explicit_target(state, instances, definitions, opts)
 		:totable()
 
 	if #target_instances > 0 then
-		return resolve_by_behavior(target_instances, opts.behavior, state)
+		return resolve_by_behavior(target_instances, opts.behavior, state, opts.instance_action)
 	end
 
 	local def = definitions[opts.target]
@@ -317,9 +340,9 @@ function M.resolve(state, definitions, opts)
 	local items = {}
 	if #instances > 0 then
 		if opts.mode == "all" and opts.behavior == "pick" then
-			items = build_instance_items(sort_instances(instances), state)
+			items = build_instance_items(sort_instances(instances), state, opts.instance_action)
 		else
-			local result = resolve_by_behavior(instances, opts.behavior, state)
+			local result = resolve_by_behavior(instances, opts.behavior, state, opts.instance_action)
 			if opts.mode ~= "all" or result.kind == "targets" then
 				return result
 			end

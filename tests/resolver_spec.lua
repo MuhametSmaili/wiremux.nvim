@@ -63,8 +63,8 @@ describe("resolver", function()
 			assert.are.equal("pick", result.kind)
 			assert.are.equal(2, #result.items)
 			assert.are.equal("instance", result.items[1].type)
-			assert.are.equal("[m] 1:1    test", result.items[1].label)
-			assert.are.equal("[m] 1:2    test", result.items[2].label)
+			assert.are.equal("[managed]  1:1    test", result.items[1].label)
+			assert.are.equal("[managed]  1:2    test", result.items[2].label)
 		end)
 
 		it("skips picker when only one instance exists", function()
@@ -95,8 +95,8 @@ describe("resolver", function()
 
 			local result = resolver.resolve(state, {}, { behavior = "pick" })
 
-			assert.are.equal("[m] 1      zebra", result.items[1].label)
-			assert.are.equal("[m] 2      alpha", result.items[2].label)
+			assert.are.equal("[managed]  1      zebra", result.items[1].label)
+			assert.are.equal("[managed]  2      alpha", result.items[2].label)
 		end)
 	end)
 
@@ -301,9 +301,9 @@ describe("resolver", function()
 			assert.is_true(result.items[1].instance.managed)
 			assert.are.equal("adopt", result.items[2].type)
 			assert.is_false(result.items[2].instance.managed)
-			assert.matches("%[~%]%s+1:2%s+opencode", result.items[2].label)
+			assert.matches("%[adopt%]%s+1:2%s+opencode", result.items[2].label)
 			assert.are.equal("definition", result.items[3].type)
-			assert.are.equal("[+] server", result.items[3].label)
+			assert.are.equal("[+]               server", result.items[3].label)
 		end)
 
 		it("uses the same instance filter without mutating managed and unmanaged candidates", function()
@@ -408,7 +408,7 @@ describe("resolver", function()
 			assert.are.equal(1, #result.items)
 			assert.are.equal("adopt", result.items[1].type)
 			assert.are.equal(orphan, result.items[1].instance)
-			assert.matches("^%[~%]", result.items[1].label)
+			assert.matches("^%[re%-adopt%]", result.items[1].label)
 		end)
 
 		it("keeps adoption explicit in the auto fallback for pick, last, and bulk sends", function()
@@ -526,17 +526,208 @@ describe("resolver", function()
 		assert.are.equal(6, #result.items)
 		assert.are.same(
 			{
-				"[m] $3:1:0 zsh",
-				"[m] $2:1:0 zsh",
-				"[m] 1:0    zsh",
-				"[~] 1:1    zsh",
-				"[~] $2:1:1 zsh",
-				"[~] $3:1:1 zsh",
+				"[managed]  $3:1:0 zsh",
+				"[managed]  $2:1:0 zsh",
+				"[managed]  1:0    zsh",
+				"[adopt]    1:1    zsh",
+				"[adopt]    $2:1:1 zsh",
+				"[adopt]    $3:1:1 zsh",
 			},
 			vim.tbl_map(function(item)
 				return item.label
 			end, result.items)
 		)
+	end)
+
+	describe("picker row labels", function()
+		it("identifies definitions as creation without implying a live pane location", function()
+			local result = resolver.resolve({ instances = {} }, { claude = { kind = "pane" } }, {
+				mode = "definitions",
+				behavior = "pick",
+			})
+
+			assert.are.equal("[+]               claude", result.items[1].label)
+		end)
+
+		it("distinguishes first adoption from re-adoption with pane and window context", function()
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {},
+				panes = {
+					{
+						id = "%1",
+						managed = false,
+						session_id = "$1",
+						kind = "pane",
+						window_index = 2,
+						pane_index = 2,
+						window_name = "scratch",
+						running_command = "node",
+					},
+					{
+						id = "%2",
+						managed = true,
+						orphaned = true,
+						session_id = "$1",
+						kind = "pane",
+						target = "terminal",
+						origin = "%9",
+						window_index = 4,
+						pane_index = 0,
+						window_name = "work",
+						running_command = "zsh",
+					},
+				},
+			}
+
+			local result = resolver.resolve(state, {}, { mode = "all", behavior = "pick", allow_adopt = true })
+
+			assert.are.equal("[adopt]    2:2    node · scratch", result.items[1].label)
+			assert.are.equal("[re-adopt] 4:0    terminal · work [zsh]", result.items[2].label)
+		end)
+
+		it("keeps a configured string label alongside the window and command", function()
+			require("wiremux.config").opts.targets.definitions = { terminal = { label = "Runner" } }
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {
+					{
+						id = "%1",
+						managed = true,
+						session_id = "$1",
+						origin = "%0",
+						kind = "pane",
+						target = "terminal",
+						window_index = 2,
+						pane_index = 1,
+						window_name = "dev",
+						running_command = "node",
+					},
+				},
+			}
+
+			local result = resolver.resolve(
+				state,
+				{ other = {} },
+				{ behavior = "pick", mode = "all", instance_action = "send" }
+			)
+
+			assert.are.equal("           2:1    Runner · dev [node]", result.items[1].label)
+		end)
+
+		it("uses the window name once even when a window target has a configured label", function()
+			require("wiremux.config").opts.targets.definitions = { terminal = { label = "Runner" } }
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {
+					{
+						id = "%1",
+						managed = true,
+						session_id = "$1",
+						origin = "%0",
+						kind = "window",
+						target = "terminal",
+						window_index = 2,
+						pane_index = 1,
+						window_name = "node",
+						running_command = "node",
+					},
+				},
+			}
+
+			local result = resolver.resolve(
+				state,
+				{ other = {} },
+				{ behavior = "pick", mode = "all", instance_action = "send" }
+			)
+
+			assert.are.equal("           2:1    node", result.items[1].label)
+		end)
+
+		it("omits empty window and command fields without dangling separators", function()
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {},
+				panes = {
+					{
+						id = "%1",
+						managed = false,
+						session_id = "$1",
+						kind = "pane",
+						window_index = 2,
+						pane_index = 1,
+						window_name = "",
+						running_command = "",
+					},
+				},
+			}
+
+			local result = resolver.resolve(state, {}, { behavior = "pick", mode = "all", allow_adopt = true })
+
+			assert.are.equal("[adopt]    2:1    pane", result.items[1].label)
+		end)
+
+		it("omits send badges in explicit-target and last-used fallback pickers", function()
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {
+					{ id = "%1", managed = true, session_id = "$1", origin = "%0", kind = "pane", target = "terminal" },
+					{ id = "%2", managed = true, session_id = "$1", origin = "%0", kind = "pane", target = "terminal" },
+				},
+			}
+			for _, opts in ipairs({
+				{ target = "terminal", behavior = "pick", instance_action = "send" },
+				{ mode = "auto", behavior = "last", instance_action = "send" },
+				{ mode = "instances", behavior = "pick", instance_action = "send" },
+			}) do
+				local result = resolver.resolve(state, {}, opts)
+
+				assert.are.equal("           1      terminal", result.items[1].label)
+			end
+		end)
+
+		it("distinguishes same-command send targets by location and window name", function()
+			local state = {
+				origin_pane_id = "%0",
+				session_id = "$1",
+				instances = {
+					{
+						id = "%1",
+						managed = true,
+						session_id = "$1",
+						origin = "%0",
+						kind = "pane",
+						target = "terminal",
+						window_index = 2,
+						pane_index = 1,
+						window_name = "dev",
+						running_command = "node",
+					},
+					{
+						id = "%2",
+						managed = true,
+						session_id = "$1",
+						origin = "%0",
+						kind = "pane",
+						target = "terminal",
+						window_index = 3,
+						pane_index = 0,
+						window_name = "scratch",
+						running_command = "node",
+					},
+				},
+			}
+
+			local result = resolver.resolve(state, {}, { behavior = "pick", instance_action = "send" })
+
+			assert.are.equal("           2:1    terminal · dev [node]", result.items[1].label)
+			assert.are.equal("           3:0    terminal · scratch [node]", result.items[2].label)
+		end)
 	end)
 
 	describe("label with running_command", function()
@@ -562,7 +753,7 @@ describe("resolver", function()
 
 			local result = resolver.resolve(state, {}, { behavior = "pick" })
 
-			assert.are.equal("[m] 1:2    node", result.items[1].label)
+			assert.are.equal("[managed]  1:2    node", result.items[1].label)
 		end)
 
 		it("includes running_command in label", function()
@@ -594,8 +785,8 @@ describe("resolver", function()
 			local result = resolver.resolve(state, {}, { behavior = "pick" })
 
 			assert.are.equal("pick", result.kind)
-			assert.are.equal("[m] 1      test [npm]", result.items[1].label)
-			assert.are.equal("[m] 2      test [node]", result.items[2].label)
+			assert.are.equal("[managed]  1      test [npm]", result.items[1].label)
+			assert.are.equal("[managed]  2      test [node]", result.items[2].label)
 		end)
 
 		it("omits running_command bracket when empty", function()
@@ -610,8 +801,8 @@ describe("resolver", function()
 
 			local result = resolver.resolve(state, {}, { behavior = "pick" })
 
-			assert.are.equal("[m] 1      test", result.items[1].label)
-			assert.are.equal("[m] 2      test", result.items[2].label)
+			assert.are.equal("[managed]  1      test", result.items[1].label)
+			assert.are.equal("[managed]  2      test", result.items[2].label)
 		end)
 	end)
 
@@ -642,6 +833,7 @@ describe("resolver", function()
 						origin = "%0",
 						kind = "pane",
 						target = "myapp",
+						window_name = "dev",
 						running_command = "npm",
 					},
 					{
@@ -656,7 +848,7 @@ describe("resolver", function()
 				},
 			}
 
-			local result = resolver.resolve(state, {}, { behavior = "pick" })
+			local result = resolver.resolve(state, {}, { behavior = "pick", instance_action = "send" })
 
 			assert.are.equal("pick", result.kind)
 			assert.are.equal("custom 1 (npm)", result.items[1].label)
@@ -689,8 +881,8 @@ describe("resolver", function()
 			local result = resolver.resolve(state, {}, { behavior = "pick" })
 
 			assert.are.equal("pick", result.kind)
-			assert.are.equal("[m] 1      myapp", result.items[1].label)
-			assert.are.equal("[m] 2      myapp", result.items[2].label)
+			assert.are.equal("[managed]  1      myapp", result.items[1].label)
+			assert.are.equal("[managed]  2      myapp", result.items[2].label)
 		end)
 	end)
 

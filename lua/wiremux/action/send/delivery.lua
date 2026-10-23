@@ -19,6 +19,7 @@ function M.send(payload, options, target_title)
 	}
 	local ok, err = pcall(require("wiremux.core.action").run, {
 		prompt = "Send to",
+		instance_action = "send",
 		behavior = options.behavior,
 		mode = options.mode,
 		filter = options.filter,

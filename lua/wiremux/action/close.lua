@@ -14,6 +14,7 @@ function M.close(opts)
 
 	action.run({
 		prompt = "Close",
+		instance_action = "close",
 		behavior = opts.behavior or config.opts.actions.close.behavior or "pick",
 		mode = "instances",
 		filter = opts.filter,

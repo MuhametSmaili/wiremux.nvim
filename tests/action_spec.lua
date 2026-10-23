@@ -261,6 +261,71 @@ describe("action", function()
 			package.loaded["wiremux.core.resolver"] = nil
 		end)
 
+		describe("action labels", function()
+			local reads, label
+
+			before_each(function()
+				reads, label = 0, nil
+				mocks.config.opts.actions = { focus = {}, close = {}, toggle = { focus = false } }
+				mocks.backend.state.get = function()
+					reads = reads + 1
+					return {
+						origin_pane_id = "%0",
+						session_id = "$1",
+						instances = {
+							{
+								id = "%1",
+								managed = true,
+								target = "terminal",
+								origin = "%0",
+								session_id = "$1",
+								kind = "pane",
+								window_index = 2,
+								pane_index = 1,
+								window_name = "dev",
+								running_command = "node",
+							},
+							{
+								id = "%2",
+								managed = true,
+								target = "other",
+								origin = "%0",
+								session_id = "$1",
+								kind = "pane",
+							},
+						},
+					}
+				end
+				mocks.picker.select = function(items, opts, choose)
+					label = opts.format_item(items[1])
+					assert.are.equal(label, opts.format_item(items[1]))
+					choose(nil)
+				end
+			end)
+
+			it("omits the send badge while reusing one state refresh", function()
+				local ok, err =
+					require("wiremux.action.send.delivery").send("payload", { behavior = "pick", mode = "all" })
+
+				assert.is_true(ok, err)
+				assert.are.equal("           2:1    terminal · dev [node]", label)
+				assert.are.equal(1, reads)
+			end)
+
+			for _, case in ipairs({
+				{ action = "focus", label = "[focus]    2:1    terminal · dev [node]" },
+				{ action = "close", label = "[close]    2:1    terminal · dev [node]" },
+				{ action = "toggle", label = "[toggle]   2:1    terminal · dev [node]" },
+			}) do
+				it("labels " .. case.action .. " rows without implying a send", function()
+					require("wiremux.action." .. case.action)[case.action]({ behavior = "pick" })
+
+					assert.are.equal(case.label, label)
+					assert.are.equal(1, reads)
+				end)
+			end
+		end)
+
 		it("never feeds unmanaged panes into a toggle filter", function()
 			mocks.config.opts.actions.toggle = { focus = false }
 			mocks.config.opts.targets.definitions = { terminal = { kind = "pane" } }

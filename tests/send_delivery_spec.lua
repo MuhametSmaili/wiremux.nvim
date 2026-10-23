@@ -69,6 +69,7 @@ describe("send delivery", function()
 		assert.is_nil(err)
 		assert.are.same({
 			prompt = "Send to",
+			instance_action = "send",
 			behavior = "last",
 			mode = "instances",
 			target = "terminal",
