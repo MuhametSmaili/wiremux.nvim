@@ -384,6 +384,106 @@ describe("resolver", function()
 		end)
 	end)
 
+	describe("orphaned targets", function()
+		local orphan, state
+
+		before_each(function()
+			orphan = {
+				id = "%1",
+				session_id = "$1",
+				managed = true,
+				orphaned = true,
+				target = "terminal",
+				origin = "%9",
+				kind = "window",
+				running_command = "zsh",
+			}
+			state = { origin_pane_id = "%0", session_id = "$1", instances = {}, panes = { orphan } }
+		end)
+
+		it("offers a same-session orphan for adoption rather than direct delivery", function()
+			local result = resolver.resolve(state, {}, { mode = "all", behavior = "pick", allow_adopt = true })
+
+			assert.are.equal("pick", result.kind)
+			assert.are.equal(1, #result.items)
+			assert.are.equal("adopt", result.items[1].type)
+			assert.are.equal(orphan, result.items[1].instance)
+			assert.matches("^%[~%]", result.items[1].label)
+		end)
+
+		it("keeps adoption explicit in the auto fallback for pick, last, and bulk sends", function()
+			for _, behavior in ipairs({ "pick", "last", "all" }) do
+				local result = resolver.resolve(state, {}, { mode = "auto", behavior = behavior, allow_adopt = true })
+				assert.are.equal("pick", result.kind)
+				assert.are.equal(1, #result.items)
+				assert.are.equal("adopt", result.items[1].type)
+			end
+		end)
+
+		it("excludes cross-session orphans by default", function()
+			orphan.session_id = "$2"
+			local result = resolver.resolve(state, {}, { mode = "all", behavior = "pick", allow_adopt = true })
+			assert.are.same({}, result.items)
+		end)
+
+		it("lets custom filters include or reject an orphan without changing its metadata", function()
+			orphan.session_id = "$2"
+			local before = vim.deepcopy(state)
+			for _, include in ipairs({ true, false }) do
+				local result = resolver.resolve(state, {}, {
+					mode = "all",
+					behavior = "pick",
+					allow_adopt = true,
+					filter = {
+						instances = function(inst)
+							assert.are.equal(orphan, inst)
+							assert.is_true(inst.managed)
+							assert.is_true(inst.orphaned)
+							return include
+						end,
+					},
+				})
+				assert.are.equal(include and 1 or 0, #result.items)
+			end
+			assert.are.same(before, state)
+		end)
+
+		it("never offers orphans to actions without adoption capability or in instances-only mode", function()
+			for _, opts in ipairs({
+				{ mode = "all", behavior = "pick" },
+				{ mode = "instances", behavior = "pick", allow_adopt = true },
+			}) do
+				opts.filter = {
+					instances = function()
+						error("orphan must not reach a managed-only action filter")
+					end,
+				}
+				assert.are.same({}, resolver.resolve(state, {}, opts).items)
+			end
+		end)
+
+		it("does not include orphans in direct last or bulk delivery even with permissive filters", function()
+			local owned =
+				{ id = "%2", session_id = "$1", managed = true, target = "owned", origin = "%0", kind = "pane" }
+			state.instances = { owned }
+			state.last_used_target_id = owned.id
+			for _, behavior in ipairs({ "last", "all" }) do
+				local result = resolver.resolve(state, {}, {
+					mode = "all",
+					behavior = behavior,
+					allow_adopt = true,
+					filter = {
+						instances = function()
+							return true
+						end,
+					},
+				})
+				assert.are.equal("targets", result.kind)
+				assert.are.same({ owned }, result.targets)
+			end
+		end)
+	end)
+
 	it("keeps cross-session panes distinct and sorts only the managed group", function()
 		require("wiremux.config").opts.picker.instances.sort = function(a, b)
 			return a.target > b.target

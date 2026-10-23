@@ -140,7 +140,7 @@ local defaults = {
 		adapter = nil,
 		instances = {
 			filter = function(inst, state)
-				if not inst.managed then
+				if not inst.managed or inst.orphaned then
 					return inst.session_id == state.session_id
 				end
 				return inst.origin == state.origin_pane_id

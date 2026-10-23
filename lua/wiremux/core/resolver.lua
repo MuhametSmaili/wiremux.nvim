@@ -8,7 +8,7 @@ local instance = require("wiremux.core.instance")
 ---@field mode? wiremux.ResolveMode
 ---@field filter? wiremux.config.FilterConfig
 ---@field target? string Target definition name for explicit targeting
----@field allow_adopt? boolean Internal action capability; unmanaged instances are never queried without it.
+---@field allow_adopt? boolean Internal action capability; adoption candidates are never queried without it.
 
 ---@class wiremux.ResolveItem.Instance
 ---@field type "instance"
@@ -210,13 +210,13 @@ end
 ---@param state wiremux.State
 ---@param action_filter? wiremux.config.FilterConfig
 ---@return wiremux.Instance[]
-local function get_unmanaged_instances(state, action_filter)
-	local unmanaged = vim.iter(state.panes or {})
+local function get_adoptable_instances(state, action_filter)
+	local candidates = vim.iter(state.panes or {})
 		:filter(function(inst)
-			return not inst.managed
+			return not inst.managed or inst.orphaned
 		end)
 		:totable()
-	return M.filter_instances(unmanaged, state, action_filter)
+	return M.filter_instances(candidates, state, action_filter)
 end
 
 ---@param definitions table<string, wiremux.target.definition>
@@ -333,7 +333,7 @@ function M.resolve(state, definitions, opts)
 
 	-- Only build adoption/create rows for the auto fallback or an all-mode picker.
 	if opts.allow_adopt then
-		vim.list_extend(items, build_adopt_items(get_unmanaged_instances(state, opts.filter), state))
+		vim.list_extend(items, build_adopt_items(get_adoptable_instances(state, opts.filter), state))
 	end
 	vim.list_extend(items, build_definition_items(filtered_defs))
 	local first = items[1]

@@ -11,6 +11,7 @@ local instance = require("wiremux.core.instance")
 ---@field window_id string
 ---@field kind "pane"|"window"
 ---@field managed boolean
+---@field orphaned? boolean True when a complete snapshot proves the recorded origin no longer exists.
 ---@field target string?
 ---@field origin string?
 ---@field origin_cwd string?
@@ -28,7 +29,7 @@ local instance = require("wiremux.core.instance")
 ---@field origin_pane_id string?
 ---@field session_id string?
 ---@field last_used_target_id string?
----@field instances wiremux.ManagedInstance[] Managed subset retained for target operations.
+---@field instances wiremux.ManagedInstance[] Non-orphaned managed subset retained for target operations.
 ---@field panes wiremux.Instance[] All panes from the query, including unmanaged instances.
 
 ---@param line string
@@ -83,20 +84,32 @@ local function parse_state_results(results)
 	local panes_output = results[2] or ""
 
 	local panes = {}
-	local instances = {}
-	local last_used_target_id = nil
-	local max_used_at = 0
-
+	local live_panes = {}
+	local complete = #results == 2 and origin_pane_id ~= nil
 	for line in panes_output:gmatch("[^\n]+") do
 		local pane = parse_pane_line(line)
 		if pane then
 			table.insert(panes, pane)
-			if pane.target then
-				table.insert(instances, pane)
-				if pane.last_used_at and pane.last_used_at > max_used_at then
-					max_used_at = pane.last_used_at
-					last_used_target_id = pane.id
-				end
+			live_panes[pane.id] = true
+		else
+			complete = false
+		end
+	end
+
+	-- Never infer a missing owner from partial discovery or picker/session filters.
+	complete = complete and live_panes[origin_pane_id] == true
+	local instances = {}
+	local last_used_target_id = nil
+	local max_used_at = 0
+	for _, pane in ipairs(panes) do
+		if complete and pane.managed and pane.origin and not live_panes[pane.origin] then
+			pane.orphaned = true
+		end
+		if pane.managed and not pane.orphaned then
+			table.insert(instances, pane)
+			if pane.last_used_at and pane.last_used_at > max_used_at then
+				max_used_at = pane.last_used_at
+				last_used_target_id = pane.id
 			end
 		end
 	end
@@ -187,6 +200,7 @@ function M.adopt(target, st, target_name)
 	end
 
 	target.managed = true
+	target.orphaned = nil
 	target.target = target_name
 	target.origin = origin ~= "" and origin or nil
 	target.origin_cwd = origin_cwd

@@ -163,6 +163,110 @@ describe("state", function()
 				assert.are.equal("%2", state.instances[1].id)
 			end)
 
+			it("keeps orphaned targets available for adoption but out of operational instances", function()
+				client.query = function(cmds)
+					assert.are.same({ query.current_pane(), query.list_panes() }, cmds)
+					return {
+						current_pane(),
+						pane({ pane_id = "%0" }) .. "\n" .. pane({
+							["@wiremux_target"] = "terminal",
+							["@wiremux_origin"] = "%9",
+							["@wiremux_kind"] = "window",
+							["@wiremux_last_used_at"] = "2000",
+						}),
+					}
+				end
+
+				local state = get()
+
+				assert.is_true(state.panes[2].orphaned)
+				assert.is_true(state.panes[2].managed)
+				assert.are.equal("terminal", state.panes[2].target)
+				assert.are.equal("window", state.panes[2].kind)
+				assert.are.equal("%9", state.panes[2].origin)
+				assert.are.same({}, state.instances)
+				assert.is_nil(state.last_used_target_id)
+			end)
+
+			it("recognizes an unmanaged owner in another session regardless of query order", function()
+				client.query = function()
+					return {
+						current_pane(),
+						table.concat({
+							pane({ ["@wiremux_target"] = "terminal", ["@wiremux_origin"] = "%9" }),
+							pane({ pane_id = "%0" }),
+							pane({ pane_id = "%9", session_id = "$2" }),
+						}, "\n"),
+					}
+				end
+
+				local state = get()
+
+				assert.is_nil(state.panes[1].orphaned)
+				assert.are.equal("%1", state.instances[1].id)
+			end)
+
+			it("does not infer orphaned ownership from incomplete or malformed discovery", function()
+				local target = pane({ ["@wiremux_target"] = "terminal", ["@wiremux_origin"] = "%9" })
+				local complete = pane({ pane_id = "%0" }) .. "\n" .. target
+				for scenario, results in pairs({
+					["current pane absent"] = { current_pane(), target },
+					["malformed pane record"] = { current_pane(), complete .. "\ninvalid" },
+					["invalid current pane"] = { "%invalid", complete },
+					["invalid query framing"] = { current_pane(), complete, "unexpected result" },
+				}) do
+					client.query = function()
+						return results
+					end
+
+					local state = get()
+
+					assert.are.equal(1, #state.instances, scenario)
+					assert.is_nil(state.instances[1].orphaned, scenario)
+				end
+			end)
+
+			it("does not treat missing origin metadata as proof of a dead owner", function()
+				client.query = function()
+					return {
+						current_pane(),
+						pane({ pane_id = "%0" }) .. "\n" .. pane({ ["@wiremux_target"] = "terminal" }),
+					}
+				end
+
+				local state = get()
+
+				assert.are.equal(1, #state.instances)
+				assert.is_nil(state.instances[1].orphaned)
+			end)
+
+			it("uses the most recent non-orphaned target for last-used selection", function()
+				client.query = function()
+					return {
+						current_pane(),
+						table.concat({
+							pane({ pane_id = "%0" }),
+							pane({
+								["@wiremux_target"] = "orphan",
+								["@wiremux_origin"] = "%9",
+								["@wiremux_last_used_at"] = "2000",
+							}),
+							pane({
+								pane_id = "%2",
+								["@wiremux_target"] = "owned",
+								["@wiremux_origin"] = "%0",
+								["@wiremux_last_used_at"] = "1000",
+							}),
+						}, "\n"),
+					}
+				end
+
+				local state = get()
+
+				assert.are.equal("%2", state.last_used_target_id)
+				assert.are.equal(1, #state.instances)
+			end)
+
 			it("handles window kind", function()
 				client.query = function()
 					return {
@@ -337,6 +441,13 @@ describe("state", function()
 		end)
 	end
 
+	it("returns no adoption candidates when synchronous discovery fails", function()
+		client.query = function()
+			return {}
+		end
+		assert.are.same({}, state_module.get().panes)
+	end)
+
 	it("passes asynchronous query errors to the callback", function()
 		client.query_async = function(_, callback)
 			callback(nil)
@@ -350,6 +461,37 @@ describe("state", function()
 	end)
 
 	describe("adopt", function()
+		it("restores an orphan to operational instances without renaming or changing its kind", function()
+			local target = {
+				id = "%2",
+				window_id = "@1",
+				kind = "window",
+				managed = true,
+				orphaned = true,
+				target = "terminal",
+				origin = "%9",
+			}
+			local state = { origin_pane_id = "%0", instances = {}, panes = { target } }
+			client.execute = function(commands)
+				assert.is_true(target.orphaned)
+				for _, command in ipairs(commands) do
+					assert.is_not.equal("@wiremux_target", command[5])
+					assert.is_not.equal("@wiremux_kind", command[5])
+				end
+				return ""
+			end
+
+			assert.is_true(state_module.adopt(target, state))
+
+			assert.is_nil(target.orphaned)
+			assert.is_true(target.managed)
+			assert.are.equal("terminal", target.target)
+			assert.are.equal("window", target.kind)
+			assert.are.equal("%0", target.origin)
+			assert.are.same({ target }, state.instances)
+			assert.are.equal("%2", state.last_used_target_id)
+		end)
+
 		it("defaults missing and empty names to the numeric pane ID", function()
 			for _, case in ipairs({
 				{ id = "%0", expected = "pane-0" },
