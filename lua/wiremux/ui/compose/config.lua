@@ -241,9 +241,7 @@ local function merge(base, overrides)
 	local merged = vim.tbl_deep_extend("force", {}, base, overrides)
 	if type(overrides.keymaps) == "table" and type(merged.keymaps) == "table" then
 		for action, entry in pairs(overrides.keymaps) do
-			if type(entry) == "table" and next(entry) == nil then
-				merged.keymaps[action] = {}
-			end
+			merged.keymaps[action] = vim.deepcopy(entry)
 		end
 	end
 	return merged
@@ -268,7 +266,19 @@ function M.normalize_global(options, defaults)
 	local session_options = vim.deepcopy(options)
 	local limit = session_options.history_limit
 	session_options.history_limit = nil
+	local use_default_keymaps = session_options.use_default_keymaps
+	session_options.use_default_keymaps = nil
 	local normalized, errors = M.options(session_options, "ui.compose")
+	if use_default_keymaps ~= nil then
+		if type(use_default_keymaps) == "boolean" then
+			normalized.use_default_keymaps = use_default_keymaps
+		else
+			table.insert(
+				errors,
+				validate.error("ui.compose.use_default_keymaps", "ui.compose.use_default_keymaps must be a boolean")
+			)
+		end
+	end
 	if limit ~= nil then
 		if type(limit) == "number" and limit >= 0 and limit % 1 == 0 then
 			normalized.history_limit = limit
@@ -279,7 +289,11 @@ function M.normalize_global(options, defaults)
 			)
 		end
 	end
-	return merge(defaults, normalized), errors
+	local base = vim.deepcopy(defaults)
+	if normalized.use_default_keymaps == false then
+		base.keymaps = {}
+	end
+	return merge(base, normalized), errors
 end
 
 ---Normalize the global actions.send.compose default.
@@ -307,11 +321,11 @@ function M.normalize_action(value, default)
 	return M.options(value, "actions.send.compose")
 end
 
----Resolve one selected runtime compose value into a complete session-only config.
+---Resolve one selected runtime compose value into a complete session config.
 ---@param global_compose wiremux.config.GlobalComposeConfig
 ---@param value any
 ---@param path string
----@return wiremux.config.ComposeSessionConfig? config
+---@return wiremux.config.ResolvedComposeConfig? config
 ---@return wiremux.Error[] errors
 function M.resolve(global_compose, value, path)
 	if value == nil or value == false then

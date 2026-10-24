@@ -53,6 +53,14 @@ function M.send_motion(opts)
 	return require("wiremux.action.send_motion").send_motion(opts)
 end
 
+---Actions on the current Compose draft, independent of its keybindings.
+---@type wiremux.compose
+M.compose = setmetatable({}, {
+	__index = function(_, k)
+		return require("wiremux.compose")[k]
+	end,
+})
+
 --- Statusline integration for displaying wiremux state
 ---@type wiremux.statusline
 M.statusline = setmetatable({}, {

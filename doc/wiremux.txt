@@ -222,6 +222,60 @@ Compose precedence is whole-value precedence: item `compose`, call options
 `compose`, then `actions.send.compose`. Tables are not merged across those
 levels. The selected table is merged over global session defaults.
 
+Compose keymaps ~
+                                             *wiremux-compose-keymaps*
+
+`ui.compose.keymaps` stays action-keyed. Each action accepts one mapping record
+or a list of records:
+>lua
+  require("wiremux").setup({
+    ui = {
+      compose = {
+        keymaps = {
+          send = { "<leader>s", mode = "n", desc = "Send draft" },
+          close = {
+            { "q", mode = "n" },
+            { "<C-c>", mode = { "n", "i" } },
+          },
+          preview_placeholder = {}, -- disable this action's mappings
+        },
+      },
+    },
+  })
+<
+An omitted action inherits its mappings. A nonempty action entry replaces the
+entire inherited entry, including its modes, descriptions, and list entries.
+It does not add aliases to the old entry.
+
+An empty action entry (`send = {}`) disables that action's mappings. An empty
+outer table (`keymaps = {}`) does not clear defaults. `keymaps = false` and
+action entries such as `send = false` are invalid.
+
+                              *wiremux-config-compose-use-default-keymaps*
+`ui.compose.use_default_keymaps` is a global boolean, default true. Set it to
+false to omit all shipped bindings in the main Compose buffer. This includes
+the normal-mode `<C-o>` and `<C-i>` no-op blockers:
+>lua
+  require("wiremux").setup({
+    ui = {
+      compose = {
+        use_default_keymaps = false,
+        keymaps = {}, -- no configured bindings either
+      },
+    },
+  })
+<
+Explicitly configured mappings still apply with defaults off. Per-send
+`compose.keymaps` remains supported and uses the same per-action replacement
+rules over global mappings. `use_default_keymaps` is not a runtime option.
+
+Native replacements and deletions survive session refresh and reopen. Wiremux
+does not reclaim a user key through an alternate spelling.
+
+The footer shows only bindings for built-in actions that Wiremux still owns.
+Custom callbacks get no automatic action labels. Use |wiremux-compose-api| with
+native mappings through |wiremux-compose-open-event|.
+
 Compose history ~
                                              *wiremux-compose-history*
 
@@ -242,9 +296,11 @@ history access; 0 removes stored entries and disables history.
 Customize compose on open ~
                                          *wiremux-compose-open-event*
 
-Wiremux emits the `User` event `WiremuxComposeOpen` after a compose window is
-fully configured and focused. Use it for editor preferences such as insert
-mode, spell checking, or extra buffer-local mappings:
+Wiremux emits the `User` event `WiremuxComposeOpen` after it configures and
+focuses a compose window and installs its mappings. Use it for native
+callbacks. No `on_attach` or `<Plug>` API is required.
+
+Register the autocmd before opening Compose:
 >lua
   vim.api.nvim_create_autocmd("User", {
     pattern = "WiremuxComposeOpen",
@@ -253,6 +309,9 @@ mode, spell checking, or extra buffer-local mappings:
       local win = event.data.win
 
       vim.wo[win].spell = true
+      vim.keymap.set("n", "<leader>cs", function()
+        require("wiremux").compose.send({ buf = buf })
+      end, { buffer = buf, desc = "Send draft" })
       vim.keymap.set("n", "<leader>cc", function()
         vim.api.nvim_buf_set_lines(buf, 0, 0, false, {
           "Please review the following:",
@@ -264,10 +323,12 @@ mode, spell checking, or extra buffer-local mappings:
   })
 <
 
-Event data contains `buf`, `win`, and `reopened`. Initial window creation uses
-`reopened = false`; recreating a hidden draft window uses `reopened = true`.
-The event does not fire when an already-visible compose window is only focused.
-Register the autocmd before opening compose.
+Event data contains `buf`, `win`, and `reopened`. A new window uses
+`reopened = false`. A restored hidden window uses `reopened = true`.
+
+The event does not fire when Wiremux only focuses or reconfigures a visible
+window. The send callback supplies `opts.buf` so a stale callback cannot act
+on another draft.
 
 Placeholder completion ~                         *wiremux-completion*
 
@@ -384,6 +445,7 @@ added marker, location, or command. String labels replace only the target name:
         close_behavior = "hide", -- "ask" | "hide" | "discard"
         on_new_payload = "append", -- "ask" | "keep" | "replace" | "append"
         history_limit = 4, -- resolved compose sends retained on disk; 0 disables
+        use_default_keymaps = true, -- global only
         keymaps = {
           append_next = { "<C-s>", mode = "n" },
           delete_page = { "<C-x>", mode = "n" },
@@ -952,7 +1014,7 @@ wiremux.create({opts})
 
                                                       *wiremux.close()*
 wiremux.close({opts})
-        Close a target.
+        Close a tmux target, not a Compose draft. See |wiremux.compose.close()|.
 
                                                        *wiremux.adopt()*
 wiremux.adopt({opts})
@@ -1008,6 +1070,74 @@ wiremux.toggle({opts})
                                                 *wiremux.send_motion()*
 wiremux.send_motion({opts})
         Set operatorfunc and return "g@".
+
+Compose actions ~
+                                                 *wiremux-compose-api*
+
+Use `require("wiremux").compose` or `require("wiremux.compose")`. Both expose
+the named methods below. They invoke the same handlers as configured mappings.
+See |wiremux-compose-keymaps| and |wiremux-compose-open-event| for examples.
+
+Each method accepts an optional {opts} table with one optional field:
+    buf     (integer) Compose buffer. Omitted or 0 means the current buffer.
+
+A valid action focuses the Compose window. Wiremux checks the session again
+after window-enter autocmds run.
+
+Each method returns:
+    accepted (boolean) True means the handler accepted the action, not that
+                       sending or delivery succeeded.
+    reason   (string|nil) On rejection, one of:
+                       "no_session"   No active Compose session.
+                       "stale_buffer" Buffer or focus no longer matches.
+                       "hidden"       The draft is hidden.
+                       "busy"         The session is not in its editing state.
+
+Rejected actions return false without invoking the Compose handler. They never
+fall back to another draft. Invalid arguments raise an error. Supplying {buf}
+in a native callback prevents an old callback from acting on a different draft.
+
+                                              *wiremux.compose.send()*
+wiremux.compose.send({opts})
+        Confirm the draft through its send handler. This does not confirm
+        successful target selection or delivery.
+
+                                             *wiremux.compose.close()*
+wiremux.compose.close({opts})
+        Close the draft according to close_behavior: "ask", "hide", or
+        "discard". Root |wiremux.close()| still closes a tmux target.
+
+                                       *wiremux.compose.append_next()*
+wiremux.compose.append_next({opts})
+        Save and hide the draft, then append the next non-empty compose
+        payload once, regardless of on_new_payload.
+
+                                           *wiremux.compose.discard()*
+wiremux.compose.discard({opts})
+        Discard the current page. With one page, discard the whole draft and
+        close without the close prompt. With more pages, keep the others open.
+
+                                             *wiremux.compose.files()*
+wiremux.compose.files({opts})
+        Open the file picker to insert a file reference into the current page.
+
+                                       *wiremux.compose.delete_page()*
+wiremux.compose.delete_page({opts})
+        Delete the current page and select the next, wrapping to the first.
+        With one page, clear its text and keep the draft open.
+
+                               *wiremux.compose.preview_placeholder()*
+wiremux.compose.preview_placeholder({opts})
+        Preview the placeholder under the cursor. Invoke again to focus the
+        preview. This does not change the page.
+
+                                          *wiremux.compose.previous()*
+wiremux.compose.previous({opts})
+        Move to the previous compose page.
+
+                                              *wiremux.compose.next()*
+wiremux.compose.next({opts})
+        Move to the next compose page.
 
 ==============================================================================
 8. STATUSLINE                                          *wiremux-statusline*

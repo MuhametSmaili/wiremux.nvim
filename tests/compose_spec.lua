@@ -112,11 +112,459 @@ describe("compose UI", function()
 		end
 	end)
 
+	describe("public actions", function()
+		before_each(function()
+			settings.keymaps = {}
+			settings.use_default_keymaps = false
+		end)
+
+		it("returns no_session for every action when no draft exists", function()
+			local api = require("wiremux.compose")
+			for _, name in ipairs({
+				"send",
+				"close",
+				"append_next",
+				"discard",
+				"files",
+				"delete_page",
+				"preview_placeholder",
+				"previous",
+				"next",
+			}) do
+				local accepted, reason = api[name]()
+				assert.is_false(accepted, name)
+				assert.are.equal("no_session", reason, name)
+			end
+		end)
+
+		it("uses the current buffer and sends its latest edits when options are omitted", function()
+			local sent
+			local buf = open("draft", {
+				on_confirm = function(pages)
+					sent = pages[1].text
+				end,
+			})
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "edited draft" })
+
+			assert.is_true(require("wiremux.compose").send())
+
+			assert.are.equal("edited draft", sent)
+		end)
+
+		it("accepts buffer zero as the current compose buffer", function()
+			open("draft")
+
+			assert.is_true(require("wiremux.compose").discard({ buf = 0 }))
+
+			assert.is_nil(compose.get_buf())
+		end)
+
+		it("does not fall back from an unrelated current buffer to the visible draft", function()
+			local origin = vim.api.nvim_get_current_win()
+			local buf = open("draft")
+			vim.api.nvim_set_current_win(origin)
+
+			local accepted, reason = require("wiremux.compose").discard()
+
+			assert.is_false(accepted)
+			assert.are.equal("stale_buffer", reason)
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("does not redirect a stale explicit buffer to a newer draft", function()
+			local api = require("wiremux.compose")
+			local old = open("old")
+			api.discard({ buf = old })
+			local current = open("new")
+
+			local accepted, reason = api.send({ buf = old })
+
+			assert.is_false(accepted)
+			assert.are.equal("stale_buffer", reason)
+			assert.are.equal(current, compose.get_buf())
+			assert.are.equal("new", text())
+		end)
+
+		it("rejects an action on an explicitly selected hidden draft", function()
+			local api = require("wiremux.compose")
+			local buf = open("draft")
+			assert.is_true(api.close({ buf = buf }))
+
+			local accepted, reason = api.send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("hidden", reason)
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("treats a draft whose window now displays another buffer as hidden", function()
+			local sent = false
+			local buf = open("draft", {
+				on_confirm = function()
+					sent = true
+				end,
+			})
+			vim.api.nvim_win_set_buf(0, vim.api.nvim_create_buf(false, true))
+
+			local accepted, reason = require("wiremux.compose").send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("hidden", reason)
+			assert.is_false(sent)
+		end)
+
+		it("rejects a reentrant action while confirmation is busy", function()
+			local api = require("wiremux.compose")
+			local accepted, reason
+			open("draft", {
+				on_confirm = function()
+					accepted, reason = api.send()
+					return false
+				end,
+			})
+
+			assert.is_true(api.send())
+
+			assert.is_false(accepted)
+			assert.are.equal("busy", reason)
+			assert.are.equal("draft", text())
+		end)
+
+		it("rejects malformed options before changing the draft", function()
+			local buf = open("draft")
+
+			assert.has_error(function()
+				require("wiremux.compose").send(false)
+			end)
+
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("rejects invalid buffer values instead of treating false as the current buffer", function()
+			local buf = open("draft")
+			for _, invalid in ipairs({ false, "buffer", -1, 0.5, math.huge }) do
+				assert.has_error(function()
+					require("wiremux.compose").send({ buf = invalid })
+				end)
+			end
+
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("keeps acceptance separate from a declined confirmation", function()
+			local buf = open("draft", {
+				on_confirm = function()
+					return false
+				end,
+			})
+
+			local accepted, reason = require("wiremux.compose").send()
+
+			assert.is_true(accepted)
+			assert.is_nil(reason)
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("closes according to the configured hide policy", function()
+			local buf = open("draft")
+
+			assert.is_true(require("wiremux.compose").close())
+
+			assert.are.equal(buf, compose.get_buf())
+			assert.are.equal(-1, vim.fn.bufwinid(buf))
+		end)
+
+		it("arms append-next through the public action without any mappings", function()
+			settings.on_new_payload = "keep"
+			local buf = open("first")
+			local api = require("wiremux.compose")
+
+			assert.is_true(api.append_next())
+			assert.are.equal(-1, vim.fn.bufwinid(buf))
+			open("second")
+			api.previous()
+
+			assert.are.equal("first", text())
+		end)
+
+		it("navigates to the previous page through the public action", function()
+			open("first")
+			open("second")
+
+			assert.is_true(require("wiremux.compose").previous())
+
+			assert.are.equal("first", text())
+		end)
+
+		it("navigates to the next page through the public action", function()
+			open("first")
+			open("second")
+			local api = require("wiremux.compose")
+			api.previous()
+
+			assert.is_true(api.next())
+
+			assert.are.equal("second", text())
+		end)
+
+		it("deletes the current page through the public action", function()
+			open("first")
+			open("second")
+
+			assert.is_true(require("wiremux.compose").delete_page())
+
+			assert.are.equal("first", text())
+		end)
+
+		it("clears the final page through delete_page rather than closing it", function()
+			local buf = open("draft")
+
+			assert.is_true(require("wiremux.compose").delete_page())
+
+			assert.are.equal(buf, compose.get_buf())
+			assert.are.equal("", text())
+		end)
+
+		it("discards only the current page when other pages remain", function()
+			open("first")
+			open("second")
+
+			assert.is_true(require("wiremux.compose").discard())
+
+			assert.are.equal("first", text())
+		end)
+
+		it("inserts a selected file through the public action", function()
+			require("wiremux.picker").files = function(_, choose)
+				choose("src/main.lua")
+			end
+			open("draft")
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+
+			assert.is_true(require("wiremux.compose").files())
+			vim.wait(20)
+
+			assert.are.equal("src/main.luadraft", text())
+		end)
+
+		it("previews in the explicit compose buffer even when called from another window", function()
+			local origin = vim.api.nvim_get_current_win()
+			local buf = open("Review {file}", {
+				on_preview = function()
+					return "src/main.lua", "text"
+				end,
+			})
+			vim.api.nvim_win_set_cursor(0, { 1, 9 })
+			vim.api.nvim_set_current_win(origin)
+
+			assert.is_true(require("wiremux.compose").preview_placeholder({ buf = buf }))
+
+			local preview_win = vim.b[buf].lsp_floating_preview
+			assert.is_number(preview_win)
+			assert.are.same(
+				{ "src/main.lua" },
+				vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(preview_win), 0, -1, false)
+			)
+		end)
+
+		it("supports a native send callback installed by the existing open event", function()
+			vim.api.nvim_create_autocmd("User", {
+				group = event_group,
+				pattern = "WiremuxComposeOpen",
+				callback = function(event)
+					local buf = event.data.buf
+					vim.keymap.set("n", "<F5>", function()
+						require("wiremux").compose.send({ buf = buf })
+					end, { buffer = buf })
+				end,
+			})
+			local sent
+			open("draft", {
+				on_confirm = function(pages)
+					sent = pages[1].text
+				end,
+			})
+
+			mapping("<F5>")()
+
+			assert.are.equal("draft", sent)
+		end)
+
+		it("rejects an action if entering the compose window replaces its buffer", function()
+			local origin = vim.api.nvim_get_current_win()
+			local confirmed = false
+			local buf = open("draft", {
+				on_confirm = function()
+					confirmed = true
+				end,
+			})
+			local win = vim.api.nvim_get_current_win()
+			vim.api.nvim_set_current_win(origin)
+			local replacement = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_create_autocmd("WinEnter", {
+				group = event_group,
+				once = true,
+				callback = function()
+					vim.api.nvim_win_set_buf(win, replacement)
+				end,
+			})
+
+			local accepted, reason = require("wiremux.compose").send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("hidden", reason)
+			assert.is_false(confirmed)
+		end)
+
+		it("rejects an action if an enter autocmd redirects focus away from Compose", function()
+			local origin = vim.api.nvim_get_current_win()
+			local confirmed = false
+			local buf = open("draft", {
+				on_confirm = function()
+					confirmed = true
+				end,
+			})
+			vim.api.nvim_set_current_win(origin)
+			vim.api.nvim_create_autocmd("WinEnter", {
+				group = event_group,
+				once = true,
+				callback = function()
+					vim.api.nvim_set_current_win(origin)
+				end,
+			})
+
+			local accepted, reason = require("wiremux.compose").send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("stale_buffer", reason)
+			assert.is_false(confirmed)
+			assert.are.equal(buf, compose.get_buf())
+		end)
+
+		it("returns no_session if entering the window finalizes the draft", function()
+			local origin = vim.api.nvim_get_current_win()
+			local confirmed = false
+			local buf = open("draft", {
+				on_confirm = function()
+					confirmed = true
+				end,
+			})
+			vim.api.nvim_set_current_win(origin)
+			vim.api.nvim_create_autocmd("WinEnter", {
+				group = event_group,
+				once = true,
+				callback = function()
+					vim.api.nvim_buf_delete(buf, { force = true })
+				end,
+			})
+
+			local accepted, reason = require("wiremux.compose").send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("no_session", reason)
+			assert.is_false(confirmed)
+		end)
+
+		it("does not redirect an action if entering the window creates a different draft", function()
+			local origin = vim.api.nvim_get_current_win()
+			local confirmed = false
+			local buf = open("old", {
+				on_confirm = function()
+					confirmed = true
+				end,
+			})
+			vim.api.nvim_set_current_win(origin)
+			local replacement
+			vim.api.nvim_create_autocmd("WinEnter", {
+				group = event_group,
+				once = true,
+				callback = function()
+					require("wiremux.compose").discard({ buf = buf })
+					replacement = open("new")
+				end,
+			})
+
+			local accepted, reason = require("wiremux.compose").send({ buf = buf })
+
+			assert.is_false(accepted)
+			assert.are.equal("stale_buffer", reason)
+			assert.is_false(confirmed)
+			assert.are.equal(replacement, compose.get_buf())
+			assert.are.equal("new", text())
+		end)
+
+		it("sends the draft through the public API without a send mapping", function()
+			local sent
+			local buf = open("draft", {
+				config = { keymaps = {} },
+				on_confirm = function(pages)
+					sent = pages[1].text
+				end,
+			})
+
+			local accepted = require("wiremux").compose.send({ buf = buf })
+
+			assert.is_true(accepted)
+			assert.are.equal("draft", sent)
+			assert.is_nil(compose.get_buf())
+		end)
+	end)
+
 	describe("default keymap wiring", function()
 		before_each(function()
 			local config = require("wiremux.config")
 			config.setup({ log_level = "off" })
 			settings = config.opts.ui.compose
+		end)
+
+		it("installs no main-buffer mappings when shipped defaults are disabled", function()
+			local config = require("wiremux.config")
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+			settings = config.opts.ui.compose
+
+			local buf = open("draft")
+
+			assert.are.same({}, vim.api.nvim_buf_get_keymap(buf, "n"))
+			assert.are.same({}, vim.api.nvim_buf_get_keymap(buf, "i"))
+		end)
+
+		it("keeps explicit bindings when shipped defaults are disabled", function()
+			local config = require("wiremux.config")
+			config.setup({
+				log_level = "off",
+				ui = {
+					compose = {
+						use_default_keymaps = false,
+						keymaps = { send = { { "<F5>", mode = "n" } } },
+					},
+				},
+			})
+			settings = config.opts.ui.compose
+			local sent
+			local buf = open("draft", {
+				on_confirm = function(pages)
+					sent = pages[1].text
+				end,
+			})
+
+			assert.are.equal(1, #vim.api.nvim_buf_get_keymap(buf, "n"))
+			mapping("<F5>")()
+
+			assert.are.equal("draft", sent)
+		end)
+
+		it("does not let a shipped jump blocker override an explicit action binding", function()
+			settings.keymaps = { send = { "<C-o>", mode = "n" } }
+			local sent
+			open("draft", {
+				on_confirm = function(pages)
+					sent = pages[1].text
+				end,
+			})
+
+			mapping("<C-o>")()
+
+			assert.are.equal("draft", sent)
 		end)
 
 		it("keeps native A available for appending at the end of a line", function()
@@ -881,6 +1329,268 @@ describe("compose UI", function()
 	end)
 
 	describe("keymap ownership", function()
+		it("preserves native mapping options when the callback is unchanged", function()
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			local buf = open("draft")
+			local callback = buffer_mapping(buf, "<F5>").callback
+			vim.keymap.set("n", "<F5>", callback, {
+				buffer = buf,
+				silent = true,
+				nowait = false,
+				desc = "Native send options",
+			})
+
+			open("second")
+			open("third")
+
+			local current = buffer_mapping(buf, "<F5>")
+			assert.are.equal(callback, current.callback)
+			assert.are.equal(1, current.silent)
+			assert.are.equal(0, current.nowait)
+			assert.are.equal("Native send options", current.desc)
+		end)
+
+		for _, case in ipairs({
+			{ name = "silent", field = "silent", options = { silent = true } },
+			{ name = "nowait", field = "nowait", options = { nowait = false } },
+			{ name = "description", field = "desc", options = { desc = "Native send" } },
+			{ name = "description removal", field = "desc", options = {}, clear_description = true },
+			{ name = "remapping", field = "noremap", options = { remap = true } },
+			{ name = "expression", field = "expr", options = { expr = true } },
+			{ name = "script", field = "script", options = { script = true } },
+		}) do
+			it("preserves a native " .. case.name .. " change with an unchanged callback", function()
+				settings.keymaps = { send = { "<F5>", mode = "n" } }
+				local buf = open("draft")
+				local original = buffer_mapping(buf, "<F5>")
+				local options = vim.tbl_extend("force", {
+					buffer = buf,
+					nowait = true,
+					desc = original.desc,
+				}, case.options)
+				if case.clear_description then
+					options.desc = nil
+				end
+				vim.keymap.set("n", "<F5>", original.callback, options)
+				local expected = buffer_mapping(buf, "<F5>")
+				assert.are_not.equal(original[case.field], expected[case.field])
+
+				open("second")
+
+				local current = buffer_mapping(buf, "<F5>")
+				assert.are.equal(expected[case.field], current[case.field])
+				assert.are.equal(original.callback, current.callback)
+			end)
+		end
+
+		it("keeps a native option override when configuration removes the action binding", function()
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			local buf = open("draft")
+			local original = buffer_mapping(buf, "<F5>")
+			vim.keymap.set("n", "<F5>", original.callback, {
+				buffer = buf,
+				nowait = true,
+				silent = true,
+				desc = original.desc,
+			})
+
+			open("second", { config = { keymaps = {} } })
+
+			local current = buffer_mapping(buf, "<F5>")
+			assert.are.equal(original.callback, current.callback)
+			assert.are.equal(1, current.silent)
+		end)
+
+		it("keeps ownership after an identical native reinstall so configuration can remove the binding", function()
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			local buf = open("draft")
+			local original = buffer_mapping(buf, "<F5>")
+			vim.keymap.set("n", "<F5>", original.callback, {
+				buffer = buf,
+				nowait = true,
+				desc = original.desc,
+			})
+
+			open("second", { config = { keymaps = {} } })
+
+			assert.are.same({}, buffer_mapping(buf, "<F5>"))
+		end)
+
+		it("omits footer hints for same-callback option overrides in the open hook", function()
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			vim.api.nvim_create_autocmd("User", {
+				group = event_group,
+				pattern = "WiremuxComposeOpen",
+				callback = function(event)
+					local original = buffer_mapping(event.data.buf, "<F5>")
+					vim.keymap.set("n", "<F5>", original.callback, {
+						buffer = event.data.buf,
+						nowait = true,
+						silent = true,
+						desc = original.desc,
+					})
+				end,
+			})
+
+			open("draft")
+
+			assert.not_matches("Send", decoration("footer"))
+		end)
+
+		for _, case in ipairs({
+			{ mode = "", removed = "n", retained = "o", label = "normal/operator-pending" },
+			{ mode = "!", removed = "i", retained = "c", label = "insert/command-line" },
+		}) do
+			it("tracks native deletions independently in combined " .. case.label .. " mappings", function()
+				settings.keymaps = { send = { "<F5>", mode = case.mode } }
+				local buf = open("draft")
+				vim.keymap.del(case.removed, "<F5>", { buffer = buf })
+
+				open("second")
+
+				assert.are.same({}, buffer_mapping(buf, "<F5>", case.removed))
+				assert.is_function(buffer_mapping(buf, "<F5>", case.retained).callback)
+			end)
+		end
+
+		it("preserves native replacement and deletion after hiding and restoring the draft", function()
+			local buf = open("draft")
+			vim.keymap.del("n", "<CR>", { buffer = buf })
+			local calls = 0
+			vim.keymap.set("n", "<F5>", function()
+				calls = calls + 1
+			end, { buffer = buf })
+			require("wiremux.compose").close()
+
+			compose.open("")
+			open("second")
+			mapping("<F5>")()
+
+			assert.are.same({}, buffer_mapping(buf, "<CR>"))
+			assert.are.equal(1, calls)
+		end)
+
+		it("does not reclaim a user replacement after the user later deletes it", function()
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			local buf = open("draft")
+			vim.keymap.set("n", "<F5>", function() end, { buffer = buf })
+			open("second")
+			vim.keymap.del("n", "<F5>", { buffer = buf })
+
+			open("third")
+
+			assert.are.same({}, buffer_mapping(buf, "<F5>"))
+		end)
+
+		it("preserves a visual-mode deletion without deleting the remaining select-mode binding", function()
+			settings.keymaps = { send = { "<F5>", mode = "v" } }
+			local buf = open("draft")
+			vim.keymap.del("x", "<F5>", { buffer = buf })
+
+			open("second")
+
+			assert.are.same({}, buffer_mapping(buf, "<F5>", "x"))
+			assert.is_function(buffer_mapping(buf, "<F5>", "s").callback)
+		end)
+
+		it("omits footer hints for mappings deleted in the open hook", function()
+			vim.api.nvim_create_autocmd("User", {
+				group = event_group,
+				pattern = "WiremuxComposeOpen",
+				callback = function(event)
+					vim.keymap.del("n", "<CR>", { buffer = event.data.buf })
+				end,
+			})
+
+			open("draft")
+
+			assert.not_matches("Send", decoration("footer"))
+		end)
+
+		it("omits footer hints for mappings replaced in the open hook", function()
+			vim.api.nvim_create_autocmd("User", {
+				group = event_group,
+				pattern = "WiremuxComposeOpen",
+				callback = function(event)
+					vim.keymap.set("n", "<CR>", function() end, { buffer = event.data.buf })
+				end,
+			})
+
+			open("draft")
+
+			assert.not_matches("Send", decoration("footer"))
+		end)
+
+		it("clears the final footer hint when focusing an already-visible draft", function()
+			settings.use_default_keymaps = false
+			settings.keymaps = { send = { "<F5>", mode = "n" } }
+			local buf = open("draft")
+			assert.matches("Send", decoration("footer"))
+			vim.keymap.del("n", "<F5>", { buffer = buf })
+
+			compose.open("")
+
+			assert.are.equal("", decoration("footer"))
+		end)
+
+		it("uses another still-owned binding in the footer when the first was deleted", function()
+			local buf = open(
+				"draft",
+				{ config = { keymaps = {
+					send = { { "<F5>", mode = "n" }, { "<F6>", mode = "n" } },
+				} } }
+			)
+			vim.keymap.del("n", "<F5>", { buffer = buf })
+
+			compose.open("")
+
+			assert.matches("F6.*Send", decoration("footer"))
+			assert.not_matches("F5", decoration("footer"))
+		end)
+
+		it("does not advertise an action shadowed by another configured action", function()
+			open("draft", {
+				config = {
+					keymaps = {
+						send = { "<F5>", mode = "n" },
+						discard = { "<F5>", mode = "n" },
+					},
+				},
+			})
+
+			assert.matches("Discard", decoration("footer"))
+			assert.not_matches("Send", decoration("footer"))
+		end)
+
+		it("preserves a mapping deleted by the user through repeated refreshes", function()
+			local buf = open("draft")
+			vim.keymap.del("n", "<CR>", { buffer = buf })
+
+			open("second")
+			open("third")
+
+			assert.are.same({}, buffer_mapping(buf, "<CR>"))
+		end)
+
+		it("does not reclaim a deleted mapping after configuration removes and reintroduces it", function()
+			local buf = open("draft", { config = { keymaps = { send = { "<F5>", mode = "n" } } } })
+			vim.keymap.del("n", "<F5>", { buffer = buf })
+
+			open("second", { config = { keymaps = {} } })
+			open("third", { config = { keymaps = { send = { "<F5>", mode = "n" } } } })
+
+			assert.are.same({}, buffer_mapping(buf, "<F5>"))
+		end)
+
+		it("does not reclaim a deleted mapping through an equivalent key spelling", function()
+			local buf = open("draft", { config = { keymaps = { send = { "<F5>", mode = "n" } } } })
+			vim.keymap.del("n", "<F5>", { buffer = buf })
+
+			open("second", { config = { keymaps = { send = { "<f5>", mode = "n" } } } })
+
+			assert.are.same({}, buffer_mapping(buf, "<F5>"))
+		end)
+
 		it("removes obsolete Wiremux mappings during refresh", function()
 			local buf = open("draft", { config = { keymaps = { send = { "<F5>", mode = "n" } } } })
 			assert.is_function(buffer_mapping(buf, "<F5>").callback)

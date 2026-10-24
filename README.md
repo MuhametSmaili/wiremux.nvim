@@ -114,6 +114,7 @@ The following example shows all default values from `config.lua`. Override only 
       on_new_payload = "ask",  -- "ask" | "keep" | "replace" | "append"
       history_limit = 4,        -- resolved compose sends retained on disk; 0 disables
       wo = { wrap = true, number = false, relativenumber = false },
+      use_default_keymaps = true, -- global only; false omits shipped bindings
       keymaps = {
         send = {
           { "<CR>", mode = "n", desc = "Send to target" },
@@ -302,6 +303,64 @@ It does not matter when you type a placeholder. A name in the initial text and a
 
 When a draft exists, `on_new_payload` accepts `"ask"`, `"keep"`, `"replace"`, or `"append"`. The dialog selects **Keep Draft** by default. A non-empty `send()` call updates the session configuration, callbacks, and delivery options. This update also occurs when you keep the existing pages. A `send()` call without text only reopens a hidden draft.
 
+#### Compose keymaps and actions
+
+`ui.compose.keymaps` stays action-keyed. Each action accepts one mapping record or a list of records:
+
+```lua
+require("wiremux").setup({
+  ui = {
+    compose = {
+      keymaps = {
+        send = { "<leader>s", mode = "n", desc = "Send draft" },
+        close = {
+          { "q", mode = "n" },
+          { "<C-c>", mode = { "n", "i" } },
+        },
+        preview_placeholder = {}, -- disable this action's mappings
+      },
+    },
+  },
+})
+```
+
+An omitted action inherits its mappings. A nonempty action entry replaces the entire inherited entry, including its modes, descriptions, and list entries. It does not add aliases to the old entry.
+
+An empty action entry (`send = {}`) disables that action's mappings. An empty outer table (`keymaps = {}`) does not clear defaults. `keymaps = false` and action entries such as `send = false` are invalid.
+
+Set the global boolean `ui.compose.use_default_keymaps` to `false` to omit all shipped bindings in the main Compose buffer. This includes the normal-mode `<C-o>` and `<C-i>` no-op blockers. Its default is `true`.
+
+```lua
+require("wiremux").setup({
+  ui = {
+    compose = {
+      use_default_keymaps = false,
+      keymaps = {}, -- no configured bindings either
+    },
+  },
+})
+```
+
+Explicitly configured mappings still apply with defaults off. Per-send `compose.keymaps` remains supported and uses the same per-action replacement rules over global mappings. `use_default_keymaps` is global only, not a runtime Compose option.
+
+Native replacements and deletions survive session refresh and reopen. Wiremux does not reclaim a user key through an alternate spelling.
+
+The footer shows only bindings for built-in actions that Wiremux still owns. Custom callbacks get no automatic action labels.
+
+**Public actions**
+
+Use `require("wiremux").compose` or `require("wiremux.compose")` for `send`, `close`, `append_next`, `discard`, `files`, `delete_page`, `preview_placeholder`, `previous`, and `next`.
+
+Each method accepts optional `{ buf = integer }`. An omitted `buf` or `buf = 0` uses the current buffer. For example, `require("wiremux").compose.send({ buf = 0 })` invokes the current draft's send handler. A valid action focuses the Compose window; Wiremux checks the session again after window-enter autocmds run.
+
+Each method returns `accepted, reason`. `accepted = true` means the handler accepted the action, not that sending or delivery succeeded. A rejected action returns `false` and `"no_session"`, `"stale_buffer"`, `"hidden"`, or `"busy"`.
+
+No active session, a mismatched buffer or changed focus, a hidden draft, or a nonediting session prevents the handler from running. Actions never fall back to another draft. Invalid arguments raise an error.
+
+`compose.close()` respects `close_behavior`. Root `require("wiremux").close()` still closes a tmux target. See `:help wiremux-compose-api` for each action.
+
+For a native send callback, see [Customize compose when it opens](#customize-compose-when-it-opens).
+
 #### Placeholder completion
 
 Wiremux provides optional native sources for **blink.cmp** and **nvim-cmp**. In compose, type `{` to see built-in and custom placeholders, then keep typing to filter them. Accepting a suggestion inserts the complete `{name}` and replaces any existing closing brace. Enable `preview` to show the selected placeholder's resolved value in the documentation popup while you type.
@@ -388,7 +447,9 @@ Wiremux uses the first available value. It does not merge tables from these thre
 
 #### Customize compose when it opens
 
-Wiremux emits the `User` event `WiremuxComposeOpen` after it configures and focuses a compose window. Use this event to start insert mode, enable spell checking, or add buffer-local mappings:
+Wiremux emits the `User` event `WiremuxComposeOpen` after it configures and focuses a compose window and installs its mappings. Use this event for native callbacks. No `on_attach` or `<Plug>` API is required.
+
+Register the autocmd before you open Compose:
 
 ```lua
 vim.api.nvim_create_autocmd("User", {
@@ -398,6 +459,9 @@ vim.api.nvim_create_autocmd("User", {
     local win = event.data.win
 
     vim.wo[win].spell = true
+    vim.keymap.set("n", "<leader>cs", function()
+      require("wiremux").compose.send({ buf = buf })
+    end, { buffer = buf, desc = "Send draft" })
     vim.keymap.set("n", "<leader>cc", function()
       vim.api.nvim_buf_set_lines(buf, 0, 0, false, {
         "Please review the following:",
@@ -410,7 +474,9 @@ vim.api.nvim_create_autocmd("User", {
 })
 ```
 
-The event data contains `buf`, `win`, and `reopened`. For a new window, `reopened` is `false`. For a restored hidden window, `reopened` is `true`. Wiremux does not emit the event when it only focuses a visible window. Register the autocmd before you open compose.
+The event data contains `buf`, `win`, and `reopened`. For a new window, `reopened` is `false`. For a restored hidden window, `reopened` is `true`.
+
+Wiremux does not emit the event when it only focuses or reconfigures a visible window. The send callback supplies `opts.buf` so a stale callback cannot act on another draft.
 
 ### Send keystrokes before and after text
 

@@ -115,6 +115,28 @@ describe("send compose integration", function()
 		helpers.clear(MODULES)
 	end)
 
+	it("delivers a resolved draft through the public compose API with all default mappings off", function()
+		setup()
+		config.setup({
+			log_level = "off",
+			ui = { compose = { use_default_keymaps = false, history_limit = 0 } },
+		})
+		new_source("/tmp/wiremux-public-compose.lua", { "source" })
+		local expected_file = vim.uv.fs_realpath("/tmp") .. "/wiremux-public-compose.lua"
+		local wiremux = require("wiremux")
+		wiremux.send("Review {file}", { compose = true, focus = false })
+		local buf = compose.get_buf()
+		assert.are.same({}, vim.api.nvim_buf_get_keymap(buf, "n"))
+
+		assert.is_true(wiremux.compose.send({ buf = buf }))
+		wait_for_deliveries(1)
+
+		assert.are.equal(1, #deliveries)
+		assert.are.equal("Review " .. expected_file, deliveries[1].payload)
+		assert.is_false(deliveries[1].options.focus)
+		assert.is_nil(compose.get_buf())
+	end)
+
 	it("resolves each page against its own origin and uses the latest delivery options", function()
 		local resolver_calls = 0
 		setup({

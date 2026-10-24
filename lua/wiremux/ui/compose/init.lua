@@ -9,13 +9,13 @@ local M = {}
 ---@field on_preview? fun(source: any, name: string): string?, string?
 ---@field on_cancel? fun()
 ---@field source? any
----@field config wiremux.config.ComposeSessionConfig Resolved session configuration
+---@field config wiremux.config.ResolvedComposeConfig Resolved session configuration
 
 ---@alias wiremux.ui.ComposeLifecycle "editing"|"confirming"|"sent"|"cancelled"
 
 ---@class wiremux.ui.ComposeSession
 ---@field view? wiremux.ui.ComposeView
----@field config? wiremux.config.ComposeSessionConfig
+---@field config? wiremux.config.ResolvedComposeConfig
 ---@field title? string
 ---@field draft wiremux.ui.ComposeDraft
 ---@field on_confirm? fun(pages: wiremux.ui.ComposePage[]): boolean?
@@ -120,6 +120,9 @@ local function show_session(session, reopened)
 	})
 	if not ok then
 		notify.error("WiremuxComposeOpen failed: " .. tostring(err))
+	end
+	if session.view then
+		view.refresh_footer(session.view)
 	end
 end
 
@@ -290,38 +293,85 @@ local function request_close(session)
 	end
 end
 
+---@type table<string, fun(session: wiremux.ui.ComposeSession)>
+local actions = {
+	send = confirm_draft,
+	close = request_close,
+	append_next = append_next,
+	discard = discard_page,
+	files = insert_file,
+	delete_page = delete_page,
+	preview_placeholder = preview_placeholder,
+	previous = function(session)
+		navigate(session, "previous")
+	end,
+	next = function(session)
+		navigate(session, "next")
+	end,
+}
+
 ---@param session wiremux.ui.ComposeSession
 ---@return table<string, function>
 local function session_handlers(session)
-	return {
-		send = function()
-			confirm_draft(session)
-		end,
-		close = function()
-			request_close(session)
-		end,
-		append_next = function()
-			append_next(session)
-		end,
-		discard = function()
-			discard_page(session)
-		end,
-		files = function()
-			insert_file(session)
-		end,
-		delete_page = function()
-			delete_page(session)
-		end,
-		preview_placeholder = function()
-			preview_placeholder(session)
-		end,
-		previous = function()
-			navigate(session, "previous")
-		end,
-		next = function()
-			navigate(session, "next")
-		end,
-	}
+	local handlers = {}
+	for name, action in pairs(actions) do
+		handlers[name] = function()
+			action(session)
+		end
+	end
+	return handlers
+end
+
+---@param buf number
+---@return wiremux.ui.ComposeSession? session, wiremux.compose.ActionReason? reason
+local function action_session(buf)
+	local session = active_session
+	if not session or not session.view or view.get_buf(session.view) == nil then
+		return nil, "no_session"
+	end
+	if view.get_buf(session.view) ~= buf then
+		return nil, "stale_buffer"
+	end
+	if session.status ~= "editing" then
+		return nil, "busy"
+	end
+	if not view.is_visible(session.view) then
+		return nil, "hidden"
+	end
+	return session
+end
+
+---Internal entry point for the public facade. Never redirect a stale buffer to another draft.
+---@param action string
+---@param opts? wiremux.compose.ActionOptions
+---@return boolean accepted, wiremux.compose.ActionReason? reason
+function M.dispatch(action, opts)
+	if opts ~= nil and type(opts) ~= "table" then
+		error("wiremux.compose: options must be a table")
+	end
+	local buf = opts and opts.buf
+	if buf == nil then
+		buf = 0
+	end
+	if type(buf) ~= "number" or buf < 0 or buf % 1 ~= 0 then
+		error("wiremux.compose: buf must be a non-negative integer")
+	end
+	if buf == 0 then
+		buf = vim.api.nvim_get_current_buf()
+	end
+
+	local session, reason = action_session(buf)
+	if not session then
+		return false, reason
+	end
+	local focused = view.focus(session.view)
+	-- WinEnter/BufEnter hooks may hide, finalize, or replace the draft while focusing.
+	local current, focus_reason = action_session(buf)
+	if current ~= session or not focused then
+		return false, focus_reason or "stale_buffer"
+	end
+	actions[action](session)
+	return true
 end
 
 ---@param session wiremux.ui.ComposeSession
@@ -374,7 +424,7 @@ local function apply_new_payload_policy(session, text, source)
 end
 
 ---@param session wiremux.ui.ComposeSession
----@param config wiremux.config.ComposeSessionConfig
+---@param config wiremux.config.ResolvedComposeConfig
 ---@param opts wiremux.ui.ComposeOpenOptions
 local function refresh_session(session, config, opts)
 	session.config = config
@@ -386,7 +436,7 @@ local function refresh_session(session, config, opts)
 end
 
 ---@param text string
----@param config wiremux.config.ComposeSessionConfig
+---@param config wiremux.config.ResolvedComposeConfig
 ---@param opts wiremux.ui.ComposeOpenOptions
 ---@return wiremux.ui.ComposeSession
 local function create_session(text, config, opts)

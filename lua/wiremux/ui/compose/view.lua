@@ -11,6 +11,8 @@ local M = {}
 ---@field mode string
 ---@field key string
 ---@field callback function
+---@field installed? table Native mapping snapshot; excludes metadata from ownership comparisons
+---@field action? string
 ---@field desc? string
 
 ---@class wiremux.ui.ComposeView
@@ -18,10 +20,11 @@ local M = {}
 ---@field private win number?
 ---@field private preview_win number?
 ---@field private augroup number?
----@field private config wiremux.config.ComposeSessionConfig Read-only; copied by compose.open.
+---@field private config wiremux.config.ResolvedComposeConfig Read-only; copied by compose.open.
 ---@field private title string
 ---@field private owned_mappings table<string, wiremux.ui.ComposeViewMapping>
 ---@field private mappings_initialized boolean
+---@field private user_mappings table<string, true> Keys relinquished to native mappings or deletions
 ---@field private intents wiremux.ui.ComposeViewIntents?
 ---@field private finalized boolean
 ---@field private applied_window_options table<string, true>
@@ -36,6 +39,17 @@ local ACTION_ORDER = {
 	"preview_placeholder",
 	"previous",
 	"next",
+}
+
+local OWNED_MAPPING_FIELDS = {
+	"callback",
+	"desc",
+	"expr",
+	"noremap",
+	"nowait",
+	"replace_keycodes",
+	"script",
+	"silent",
 }
 
 ---@param value number
@@ -55,7 +69,7 @@ end
 ---@param view wiremux.ui.ComposeView
 ---@return boolean
 local function window_is_valid(view)
-	return view.win ~= nil and vim.api.nvim_win_is_valid(view.win)
+	return view.win ~= nil and vim.api.nvim_win_is_valid(view.win) and vim.api.nvim_win_get_buf(view.win) == view.buf
 end
 
 ---@param view wiremux.ui.ComposeView
@@ -89,12 +103,67 @@ local function floating_window_config(config, title, footer)
 		border = config.border,
 		title = title,
 		title_pos = "center",
+		footer = footer,
+		footer_pos = "center",
 	}
-	if footer ~= "" then
-		window_config.footer = footer
-		window_config.footer_pos = "center"
-	end
 	return window_config
+end
+
+---@param buf number
+---@param mode string
+---@param key string
+---@return table?
+local function current_buffer_mapping(buf, mode, key)
+	local target = vim.keycode(key)
+	for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+		if vim.keycode(mapping.lhs) == target then
+			return mapping
+		end
+	end
+	return nil
+end
+
+---@param mode string
+---@param key string
+---@return string
+local function mapping_id(mode, key)
+	return mode .. "\0" .. vim.keycode(key)
+end
+
+---@param mapping table?
+---@param owned wiremux.ui.ComposeViewMapping?
+---@return boolean
+local function still_ours(mapping, owned)
+	local installed = owned and owned.installed
+	if mapping == nil or installed == nil then
+		return false
+	end
+	-- Source metadata can change on an identical reinstall; only behavior and description matter.
+	for _, field in ipairs(OWNED_MAPPING_FIELDS) do
+		if mapping[field] ~= installed[field] then
+			return false
+		end
+	end
+	return true
+end
+
+---@param view wiremux.ui.ComposeView
+---@param action string
+---@param mode string
+---@return string?
+local function owned_key_for_action(view, action, mode)
+	if not buffer_is_valid(view) then
+		return nil
+	end
+	for _, binding in ipairs(keymaps.normalize((view.config.keymaps or {})[action])) do
+		local owned = view.owned_mappings[mapping_id(mode, binding.key)]
+		if owned and owned.action == action then
+			local current = current_buffer_mapping(view.buf, mode, binding.key)
+			if still_ours(current, owned) then
+				return binding.key
+			end
+		end
+	end
 end
 
 ---@param view wiremux.ui.ComposeView
@@ -102,17 +171,16 @@ end
 local function footer_text(view)
 	local current_mode = vim.fn.mode() == "i" and "i" or "n"
 	local parts = {}
-	local footer_keymaps = view.config.keymaps or {}
 	local entries = {
-		{ entry = footer_keymaps.send, label = "Send" },
-		{ entry = footer_keymaps.close, label = "Close" },
-		{ entry = footer_keymaps.append_next, label = "Append Next" },
-		{ entry = footer_keymaps.discard, label = "Discard" },
-		{ entry = footer_keymaps.files, label = "Files" },
-		{ entry = footer_keymaps.delete_page, label = "Delete Page" },
+		{ action = "send", label = "Send" },
+		{ action = "close", label = "Close" },
+		{ action = "append_next", label = "Append Next" },
+		{ action = "discard", label = "Discard" },
+		{ action = "files", label = "Files" },
+		{ action = "delete_page", label = "Delete Page" },
 	}
 	for _, item in ipairs(entries) do
-		local key = keymaps.find_key_for_mode(item.entry, current_mode)
+		local key = owned_key_for_action(view, item.action, current_mode)
 		if key then
 			table.insert(parts, key .. " " .. item.label)
 		end
@@ -157,28 +225,7 @@ local function apply_window_config(view)
 	apply_window_options(view)
 end
 
----@param buf number
----@param mode string
----@param key string
----@return table?
-local function current_buffer_mapping(buf, mode, key)
-	local target = vim.keycode(key)
-	for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
-		if vim.keycode(mapping.lhs) == target then
-			return mapping
-		end
-	end
-	return nil
-end
-
----@param mode string
----@param key string
----@return string
-local function mapping_id(mode, key)
-	return mode .. "\0" .. key
-end
-
----Install this view's mappings, preserving any that the user replaced on the draft buffer.
+---Install mappings, preserving native replacements and deletions for the draft's lifetime.
 ---@param view wiremux.ui.ComposeView
 ---@param desired table<string, wiremux.ui.ComposeViewMapping>
 local function refresh_mappings(view, desired)
@@ -189,30 +236,31 @@ local function refresh_mappings(view, desired)
 	local initial_install = not view.mappings_initialized
 	local next_owned = {}
 
-	local function still_ours(mapping, owned)
-		return mapping ~= nil and owned ~= nil and mapping.callback == owned.callback
-	end
-
 	for id, owned in pairs(view.owned_mappings) do
 		local current = current_buffer_mapping(buf, owned.mode, owned.key)
-		if desired[id] == nil and still_ours(current, owned) then
+		if not still_ours(current, owned) then
+			view.user_mappings[id] = true
+		elseif desired[id] == nil then
 			pcall(vim.keymap.del, owned.mode, owned.key, { buffer = buf })
 		end
 	end
 
 	for id, mapping in pairs(desired) do
 		local current = current_buffer_mapping(buf, mapping.mode, mapping.key)
-		local can_install = initial_install or current == nil or still_ours(current, view.owned_mappings[id])
+		local can_install = not view.user_mappings[id]
+			and (initial_install or current == nil or still_ours(current, view.owned_mappings[id]))
 		if can_install then
 			vim.keymap.set(mapping.mode, mapping.key, mapping.callback, {
 				buffer = buf,
 				nowait = mapping.mode == "n",
 				desc = mapping.desc,
 			})
+			mapping.installed = current_buffer_mapping(buf, mapping.mode, mapping.key)
 			next_owned[id] = mapping
 		else
+			view.user_mappings[id] = true
 			notify.debug(
-				"Compose mapping %s in mode %s was replaced; preserving the current buffer mapping",
+				"Compose mapping %s in mode %s was changed; preserving the user's mapping or deletion",
 				mapping.key,
 				mapping.mode
 			)
@@ -251,6 +299,7 @@ local function release(view, delete_buffer, report_wipeout)
 	view.augroup = nil
 	view.intents = nil
 	view.owned_mappings = {}
+	view.user_mappings = {}
 	view.applied_window_options = {}
 	if augroup then
 		pcall(vim.api.nvim_del_augroup_by_id, augroup)
@@ -300,7 +349,7 @@ local function setup_autocmds(view)
 end
 
 ---@param text string
----@param config wiremux.config.ComposeSessionConfig
+---@param config wiremux.config.ResolvedComposeConfig
 ---@param intents wiremux.ui.ComposeViewIntents
 ---@return wiremux.ui.ComposeView
 function M.new(text, config, intents)
@@ -320,6 +369,7 @@ function M.new(text, config, intents)
 		config = config,
 		title = config.title or " Compose Message ",
 		owned_mappings = {},
+		user_mappings = {},
 		mappings_initialized = false,
 		intents = intents,
 		finalized = false,
@@ -346,6 +396,15 @@ end
 ---@return boolean
 function M.is_visible(view)
 	return window_is_valid(view)
+end
+
+---@param view wiremux.ui.ComposeView
+---@return boolean focused
+function M.focus(view)
+	if window_is_valid(view) then
+		vim.api.nvim_set_current_win(view.win)
+	end
+	return window_is_valid(view) and vim.api.nvim_get_current_win() == view.win
 end
 
 ---@param view wiremux.ui.ComposeView
@@ -413,7 +472,7 @@ function M.load_text(view, text)
 end
 
 ---@param view wiremux.ui.ComposeView
----@param config wiremux.config.ComposeSessionConfig
+---@param config wiremux.config.ResolvedComposeConfig
 function M.reconfigure(view, config)
 	close_placeholder_preview(view)
 	view.config = config
@@ -453,6 +512,7 @@ function M.install_keymaps(view, handlers)
 						mode = mode,
 						key = keymap.key,
 						callback = handler,
+						action = action,
 						desc = keymap.desc or action,
 					}
 				end
@@ -460,15 +520,19 @@ function M.install_keymaps(view, handlers)
 		end
 	end
 
-	local block_history = function() end
-	for _, key in ipairs({ "<C-o>", "<C-i>" }) do
-		local id = mapping_id("n", key)
-		desired[id] = {
-			mode = "n",
-			key = key,
-			callback = block_history,
-			desc = "Disable compose history navigation",
-		}
+	if view.config.use_default_keymaps ~= false then
+		local block_history = function() end
+		for _, key in ipairs({ "<C-o>", "<C-i>" }) do
+			local id = mapping_id("n", key)
+			if desired[id] == nil then
+				desired[id] = {
+					mode = "n",
+					key = key,
+					callback = block_history,
+					desc = "Disable compose history navigation",
+				}
+			end
+		end
 	end
 	refresh_mappings(view, desired)
 	M.refresh_footer(view)

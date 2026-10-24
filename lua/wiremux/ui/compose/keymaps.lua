@@ -1,5 +1,12 @@
 local M = {}
 
+-- Track combined mapping modes separately so a native deletion can relinquish just one mode.
+local combined_modes = {
+	[""] = { "n", "x", "s", "o" },
+	v = { "x", "s" },
+	["!"] = { "i", "c" },
+}
+
 ---Normalize a keymap entry into a list of { key, modes, desc }
 ---@param entry table? Single keymap or array of keymaps
 ---@return { key: string, modes: string[], desc?: string }[]
@@ -8,19 +15,21 @@ function M.normalize(entry)
 		return {}
 	end
 
-	if type(entry[1]) == "string" then
-		local modes = entry.mode or "n"
-		if type(modes) == "string" then
-			modes = { modes }
-		end
-		return { { key = entry[1], modes = modes, desc = entry.desc } }
-	end
-
+	local entries = type(entry[1]) == "string" and { entry } or entry
 	local result = {}
-	for _, km in ipairs(entry) do
-		local modes = km.mode or "n"
-		if type(modes) == "string" then
-			modes = { modes }
+	for _, km in ipairs(entries) do
+		local configured_modes = km.mode or "n"
+		if type(configured_modes) == "string" then
+			configured_modes = { configured_modes }
+		end
+		local modes, seen = {}, {}
+		for _, mode in ipairs(configured_modes) do
+			for _, concrete_mode in ipairs(combined_modes[mode] or { mode }) do
+				if not seen[concrete_mode] then
+					table.insert(modes, concrete_mode)
+					seen[concrete_mode] = true
+				end
+			end
 		end
 		table.insert(result, { key = km[1], modes = modes, desc = km.desc })
 	end

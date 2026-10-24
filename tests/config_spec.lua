@@ -7,8 +7,10 @@ describe("configuration", function()
 	local config
 	local original_config
 	local original_context
+	local original_notify
 
 	before_each(function()
+		original_notify = vim.notify
 		original_config = package.loaded["wiremux.config"]
 		original_context = package.loaded["wiremux.context"]
 		package.loaded["wiremux.config"] = nil
@@ -18,6 +20,7 @@ describe("configuration", function()
 	end)
 
 	after_each(function()
+		vim.notify = original_notify
 		package.loaded["wiremux.config"] = original_config
 		package.loaded["wiremux.context"] = original_context
 	end)
@@ -54,6 +57,10 @@ describe("configuration", function()
 	end)
 
 	describe("default compose options", function()
+		it("enables shipped keymaps by default", function()
+			assert.is_true(config.opts.ui.compose.use_default_keymaps)
+		end)
+
 		it("uses sixty percent of the editor width", function()
 			assert.are.equal(0.6, config.opts.ui.compose.width)
 		end)
@@ -78,6 +85,103 @@ describe("configuration", function()
 			assert.are.equal(1, #errors)
 			assert.are.equal("item.compose.on_new_payload", errors[1].path)
 			assert.matches("invalid on_new_payload", errors[1].message)
+		end)
+	end)
+
+	describe("compose default keymap policy", function()
+		it("accepts an explicitly enabled global policy", function()
+			local normalized, errors =
+				compose_config.normalize_global({ use_default_keymaps = true }, config.opts.ui.compose)
+
+			assert.are.same({}, errors)
+			assert.is_true(normalized.use_default_keymaps)
+			assert.are.equal("<CR>", keymaps.find_key_for_mode(normalized.keymaps.send, "n"))
+		end)
+
+		it("warns and restores shipped defaults for an invalid policy", function()
+			local warnings = {}
+			vim.notify = function(message, level)
+				warnings[#warnings + 1] = { message = message, level = level }
+			end
+
+			config.setup({ ui = { compose = { use_default_keymaps = "false" } } })
+
+			assert.is_true(vim.wait(1000, function()
+				return #warnings > 0
+			end))
+			assert.are.equal(1, #warnings)
+			assert.are.equal(vim.log.levels.WARN, warnings[1].level)
+			assert.matches("ui.compose.use_default_keymaps must be a boolean", warnings[1].message)
+			assert.is_true(config.opts.ui.compose.use_default_keymaps)
+			assert.are.equal("<CR>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.send, "n"))
+		end)
+
+		it("rejects default-keymap policy in action compose options", function()
+			local normalized, errors = compose_config.normalize_action({ use_default_keymaps = false }, false)
+
+			assert.are.same({}, normalized)
+			assert.are.equal(1, #errors)
+			assert.are.equal("actions.send.compose.use_default_keymaps", errors[1].path)
+			assert.matches("unknown compose option", errors[1].message)
+		end)
+
+		it("rejects per-send default-keymap policy overrides as unknown", function()
+			local resolved, errors = compose_config.resolve(config.opts.ui.compose, {
+				use_default_keymaps = false,
+			}, "item.compose")
+
+			assert.is_nil(resolved)
+			assert.are.equal(1, #errors)
+			assert.are.equal("item.compose.use_default_keymaps", errors[1].path)
+			assert.matches("unknown compose option", errors[1].message)
+		end)
+
+		it("accepts runtime bindings on the empty global keymap base", function()
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+
+			local resolved, errors = compose_config.resolve(config.opts.ui.compose, {
+				keymaps = { send = { "<F8>", mode = "i" } },
+			}, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ send = { "<F8>", mode = "i" } }, resolved.keymaps)
+			assert.is_false(resolved.use_default_keymaps)
+		end)
+
+		it("retains the disabled policy in a complete session config", function()
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+
+			local resolved, errors = compose_config.resolve(config.opts.ui.compose, true, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.is_false(resolved.use_default_keymaps)
+			assert.are.same({}, resolved.keymaps)
+		end)
+
+		it("keeps other global defaults when shipped bindings are disabled", function()
+			local expected = vim.deepcopy(config.opts.ui.compose)
+			expected.use_default_keymaps = false
+			expected.keymaps = {}
+
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+
+			assert.are.same(expected, config.opts.ui.compose)
+		end)
+
+		it("retains explicit global bindings with shipped bindings disabled", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { use_default_keymaps = false, keymaps = { send = { "<F8>", mode = "i" } } } },
+			})
+
+			assert.are.same({ send = { "<F8>", mode = "i" } }, config.opts.ui.compose.keymaps)
+		end)
+
+		it("omits every shipped action binding when disabled globally", function()
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+
+			assert.are.same({}, config.opts.ui.compose.keymaps)
+			assert.is_false(config.opts.ui.compose.use_default_keymaps)
 		end)
 	end)
 
@@ -140,6 +244,31 @@ describe("configuration", function()
 	end)
 
 	describe("repeated setup", function()
+		it("does not alias explicit user mappings after setup", function()
+			local options = {
+				log_level = "off",
+				ui = { compose = { use_default_keymaps = false, keymaps = { send = { "<F8>", mode = { "i" } } } } },
+			}
+			local original = vim.deepcopy(options)
+
+			config.setup(options)
+			config.opts.ui.compose.keymaps.send.mode[1] = "n"
+
+			assert.are.same(original, options)
+			config.setup(options)
+			assert.are.same({ send = { "<F8>", mode = { "i" } } }, config.opts.ui.compose.keymaps)
+		end)
+
+		it("restores shipped bindings after an earlier opt-out", function()
+			config.setup({ log_level = "off", ui = { compose = { use_default_keymaps = false } } })
+
+			config.setup({ log_level = "off" })
+
+			assert.is_true(config.opts.ui.compose.use_default_keymaps)
+			assert.are.equal("<CR>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.send, "n"))
+			assert.are.equal("q", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.close, "n"))
+		end)
+
 		it("owns its option tree instead of aliasing module defaults", function()
 			config.opts.ui.compose.title = " Mutated "
 			config.opts.actions.send.behavior = "all"
@@ -219,6 +348,150 @@ describe("configuration", function()
 			})
 
 			assert.are.equal(default_send_key, keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.send, "n"))
+		end)
+	end)
+
+	describe("compose action binding replacement", function()
+		it("does not alias runtime overrides or inherited bindings", function()
+			local global = { keymaps = { send = { "<F8>" }, close = { "q", mode = { "n" } } } }
+			local overrides = { keymaps = { send = { "<F9>", mode = { "i" } } } }
+			local original_global = vim.deepcopy(global)
+			local original_overrides = vim.deepcopy(overrides)
+
+			local resolved, errors = compose_config.resolve(global, overrides, "opts.compose")
+			assert.are.same({}, errors)
+			resolved.keymaps.send.mode[1] = "n"
+			resolved.keymaps.close.mode[1] = "i"
+
+			assert.are.same(original_global, global)
+			assert.are.same(original_overrides, overrides)
+		end)
+
+		it("rejects false as an action binding", function()
+			local resolved, errors = compose_config.resolve(config.opts.ui.compose, {
+				keymaps = { send = false },
+			}, "opts.compose")
+
+			assert.is_nil(resolved)
+			assert.are.equal(1, #errors)
+			assert.are.equal("opts.compose.keymaps.send", errors[1].path)
+			assert.matches("must be a keymap table or list", errors[1].message)
+		end)
+
+		it("keeps inherited mappings when runtime keymaps is empty", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { "<F8>", mode = "i" } },
+			}, { keymaps = {} }, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ send = { "<F8>", mode = "i" } }, resolved.keymaps)
+		end)
+
+		it("keeps shipped mappings when global keymaps is empty", function()
+			local defaults = vim.deepcopy(config.opts.ui.compose.keymaps)
+
+			config.setup({ log_level = "off", ui = { compose = { keymaps = {} } } })
+
+			assert.are.same(defaults, config.opts.ui.compose.keymaps)
+		end)
+
+		it("disables only the supplied runtime action with an empty binding", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { "<F8>", mode = "i" }, close = { "q" } },
+			}, { keymaps = { send = {} } }, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ send = {}, close = { "q" } }, resolved.keymaps)
+		end)
+
+		it("disables only the supplied global action with an empty binding", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { keymaps = { append_next = {} } } },
+			})
+
+			assert.are.same({}, config.opts.ui.compose.keymaps.append_next)
+			assert.are.equal("<CR>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.send, "n"))
+		end)
+
+		it("replaces a global single binding with a runtime list", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { "<F7>", mode = "i", desc = "Global send" } },
+			}, {
+				keymaps = { send = { { "<F8>", mode = "n" }, { "<F9>", mode = "i" } } },
+			}, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ { "<F8>", mode = "n" }, { "<F9>", mode = "i" } }, resolved.keymaps.send)
+		end)
+
+		it("replaces a global binding list with one runtime binding", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { { "<F7>", mode = "i" }, { "<F8>", mode = "n" } } },
+			}, {
+				keymaps = { send = { "<F9>", mode = "n" } },
+			}, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ "<F9>", mode = "n" }, resolved.keymaps.send)
+		end)
+
+		it("replaces a shipped single binding with a global list", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { keymaps = { append_next = { { "<F8>", mode = "i" }, { "<F9>" } } } } },
+			})
+
+			assert.are.same({ { "<F8>", mode = "i" }, { "<F9>" } }, config.opts.ui.compose.keymaps.append_next)
+		end)
+
+		it("replaces a shipped binding list with one global binding", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { keymaps = { close = { "<F8>", mode = "i" } } } },
+			})
+
+			assert.are.same({ "<F8>", mode = "i" }, config.opts.ui.compose.keymaps.close)
+		end)
+
+		it("does not inherit a shipped mode into an explicit global binding", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { keymaps = { append_next = { "<F8>", desc = "Append" } } } },
+			})
+
+			assert.are.same({ "<F8>", desc = "Append" }, config.opts.ui.compose.keymaps.append_next)
+		end)
+
+		it("does not inherit a global description into a runtime binding", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { "<F8>", mode = "i", desc = "Global send" } },
+			}, {
+				keymaps = { send = { "<F9>", mode = "n" } },
+			}, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ "<F9>", mode = "n" }, resolved.keymaps.send)
+		end)
+
+		it("does not inherit a global mode into a runtime binding", function()
+			local resolved, errors = compose_config.resolve({
+				keymaps = { send = { "<F8>", mode = "i", desc = "Global send" } },
+			}, {
+				keymaps = { send = { "<F9>", desc = "Runtime send" } },
+			}, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.are.same({ "<F9>", desc = "Runtime send" }, resolved.keymaps.send)
+		end)
+
+		it("does not inherit a shipped description into an explicit global binding", function()
+			config.setup({
+				log_level = "off",
+				ui = { compose = { keymaps = { append_next = { "<F8>", mode = "i" } } } },
+			})
+
+			assert.are.same({ "<F8>", mode = "i" }, config.opts.ui.compose.keymaps.append_next)
 		end)
 	end)
 
