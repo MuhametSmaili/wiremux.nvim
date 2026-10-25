@@ -409,6 +409,29 @@ In insert mode, Enter adds a line.
 
 **Unsent drafts last only for the current Neovim session.**
 
+**Code review with codediff.nvim**
+
+https://github.com/user-attachments/assets/b0418c18-56e1-46b7-af91-e2336624e392
+
+The video shows how to use Wiremux with codediff.nvim to quickly review code changes,
+collect notes in Compose, and send them to your preferred AI agent. This example uses Pi.
+
+<details>
+<summary>Set up the cdf command used in the video</summary>
+
+The `cdf` command in the video is this Zsh function. Add it to your `~/.zshrc`:
+
+```zsh
+cdf() {
+    command nvim -c 'CodeDiff --exit-on-close' "$@"
+}
+```
+
+With codediff.nvim installed, run `cdf` from your repository to open CodeDiff.
+The `--exit-on-close` flag exits Neovim when you close the diff view.
+
+</details>
+
 <details>
 <summary>Default keys and page behavior</summary>
 
