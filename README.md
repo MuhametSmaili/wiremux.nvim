@@ -1,99 +1,147 @@
 # wiremux.nvim
 
-Wiremux sends text from Neovim to tmux panes and windows. Use it to work with AI assistants, terminals, and development tools without leaving Neovim.
+Send code, prompts, and commands from Neovim to programs in tmux.
+Use Wiremux with AI assistants, terminals, or other tools.
 
 https://github.com/user-attachments/assets/77d5735d-515b-467e-87c5-417189a6359e
 
-## What is Wiremux?
+## How to think about Wiremux
 
-Wiremux connects Neovim to programs that run in tmux. You can use Wiremux to:
+A **target** is a tmux pane or window that receives your text.
+Wiremux connects your editor to that target.
 
-- Ask an AI assistant, such as Claude or OpenCode, about your code.
-- Run tests and build commands.
-- Send commands to a terminal.
+| Term           | Meaning                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| **Definition** | Configuration that tells Wiremux how to create a target.                                  |
+| **Instance**   | A tmux pane or window that already exists. One definition can create several instances.   |
+| **Draft**      | A message that you edit in Compose before you send it. A draft can contain several pages. |
 
-Wiremux manages tmux panes and windows as **targets**. It sends text to these targets and can replace placeholders such as `{file}`, `{selection}`, and `{this}`.
+Definitions live in your Neovim configuration. Target metadata lives in tmux.
+Target panes remain in tmux after you restart Neovim.
 
-### Why use Wiremux?
+## Install and send your first message
 
-- **Persistent targets**: Targets remain available after you restart Neovim.
-- **Context-aware text**: Placeholders add editor context to the text that you send.
-- **No startup work**: Wiremux does not run until you use it.
+Use Neovim 0.11 or later inside tmux. We recommend tmux 3.0 or later.
 
-## Requirements
-
-- Neovim 0.11 or later
-- tmux 3.0 or later (recommended)
-- A Neovim session that runs inside tmux
-
-## Installation
-
-Add Wiremux to your plugin manager. You can also install `fzf-lua` or `snacks.nvim` for a different picker interface.
-
-### lazy.nvim (recommended)
+Add this [lazy.nvim](https://github.com/folke/lazy.nvim) specification:
 
 ```lua
 {
-  "MSmaili/wiremux.nvim",
-  dependencies = {
-    "ibhagwan/fzf-lua", -- optional
-    "folke/snacks.nvim", -- optional
+  "MuhametSmaili/wiremux.nvim",
+  cmd = "Wiremux",
+  opts = {
+    targets = {
+      definitions = {
+        terminal = { kind = "pane", split = "horizontal" },
+      },
+    },
   },
-  opts = {},
 }
 ```
 
-### Other plugin managers
+1. Run `:Wiremux create`.
+2. Select `terminal` to create its pane.
+3. Return to the Neovim pane with your tmux navigation keys.
+4. Run `:Wiremux send ls -la`.
+
+Wiremux pastes `ls -la` into the terminal and moves focus there.
+Press Enter in that pane to run the command.
+
+Wiremux does not need an extra picker plugin. It can use fzf-lua, Snacks, or `vim.ui.select`.
+
+<details>
+<summary>Other plugin managers</summary>
+
+Install the plugin with your manager:
 
 ```lua
 -- packer.nvim
-use {
-  "MSmaili/wiremux.nvim",
-  requires = { "ibhagwan/fzf-lua" }, -- optional
-  config = function()
-    require("wiremux").setup()
-  end,
-}
-
--- vim-plug
-Plug 'MSmaili/wiremux.nvim'
+use { "MuhametSmaili/wiremux.nvim" }
 ```
 
-<details>
-<summary><strong>Default configuration</strong></summary>
+```vim
+" vim-plug
+Plug 'MuhametSmaili/wiremux.nvim'
+```
 
-The following example shows all default values from `config.lua`. Override only the values that you want to change.
+After the plugin loads, configure the terminal definition:
 
 ```lua
-{
-  log_level = "warn",
-
+require("wiremux").setup({
   targets = {
-    definitions = {},  -- your target definitions go here
+    definitions = {
+      terminal = { kind = "pane", split = "horizontal" },
+    },
   },
+})
+```
 
+</details>
+
+<details>
+<summary>Default configuration</summary>
+
+These are the shipped defaults. Copy only the options you want to change into your existing configuration.
+Wiremux has no target definitions or editor-wide keymaps by default.
+
+```lua
+require("wiremux").setup({
+  log_level = "warn",
+  targets = {
+    definitions = {},
+  },
   actions = {
-    close  = { behavior = "pick" },
-    create = { behavior = "pick",  focus = true },
-    send   = { behavior = "pick",  focus = true, compose = false },
-    focus  = { behavior = "last",  focus = true },
-    toggle = { behavior = "last",  focus = false },
+    close = { behavior = "pick" },
+    create = { behavior = "pick", focus = true },
+    send = { behavior = "pick", focus = true, compose = false },
+    focus = { behavior = "last", focus = true },
+    toggle = { behavior = "last", focus = false },
   },
-
   context = {
-    resolvers = {},  -- custom placeholder resolvers
+    resolvers = {},
   },
-
+  ui = {
+    compose = {
+      width = 0.6,
+      height = 0.4,
+      title = " Compose Message ",
+      border = "rounded",
+      style = "minimal",
+      close_behavior = "ask",
+      on_new_payload = "ask",
+      history_limit = 0,
+      use_default_keymaps = true,
+      wo = {
+        wrap = true,
+        number = false,
+        relativenumber = false,
+      },
+      keymaps = {
+        send = { { "<CR>", mode = { "n" }, desc = "Send to target" } },
+        close = {
+          { "q", mode = "n", desc = "Close draft" },
+          { "<Esc>", mode = "n", desc = "Close draft" },
+        },
+        append_next = { "<C-s>", mode = "n", desc = "Hide and append next payload" },
+        discard = { "Q", mode = "n", desc = "Discard compose page" },
+        files = { { "<C-f>", mode = { "n", "i" }, desc = "Insert file" } },
+        delete_page = { "<C-x>", mode = "n", desc = "Delete compose page" },
+        preview_placeholder = { "K", mode = "n", desc = "Preview placeholder" },
+        previous = { "<C-p>", mode = "n", desc = "Previous compose page" },
+        next = { "<C-n>", mode = "n", desc = "Next compose page" },
+      },
+    },
+  },
   picker = {
-    adapter = nil,  -- "fzf-lua" | "snacks" | custom function
+    adapter = nil, -- Detect fzf-lua or Snacks, then fall back to vim.ui.select.
     instances = {
-      filter = function(inst, state)        -- managed by origin; unmanaged by session
-        if not inst.managed then
+      filter = function(inst, state)
+        if not inst.managed or inst.orphaned then
           return inst.session_id == state.session_id
         end
         return inst.origin == state.origin_pane_id
       end,
-      sort = function(a, b)                 -- default: most recently used first
+      sort = function(a, b)
         return (a.last_used_at or 0) > (b.last_used_at or 0)
       end,
     },
@@ -102,137 +150,227 @@ The following example shows all default values from `config.lua`. Override only 
       sort = nil,
     },
   },
-
-  ui = {
-    compose = {
-      width = 0.6,
-      height = 0.4,
-      title = " Compose Message ",
-      border = "rounded",
-      style = "minimal",
-      close_behavior = "ask",  -- "ask" | "hide" | "discard"
-      on_new_payload = "ask",  -- "ask" | "keep" | "replace" | "append"
-      history_limit = 4,        -- resolved compose sends retained on disk; 0 disables
-      wo = { wrap = true, number = false, relativenumber = false },
-      use_default_keymaps = true, -- global only; false omits shipped bindings
-      keymaps = {
-        send = {
-          { "<CR>", mode = "n", desc = "Send to target" },
-        },
-        close = {
-          { "q", mode = "n", desc = "Close draft" },
-          { "<Esc>", mode = "n", desc = "Close draft" },
-        },
-        append_next = { "<C-s>", mode = "n", desc = "Hide and append next payload" },
-        discard = { "Q", mode = "n", desc = "Discard compose page" },
-        files = {
-          { "<C-f>", mode = { "n", "i" }, desc = "Insert file" },
-        },
-        delete_page = { "<C-x>", mode = "n", desc = "Delete compose page" },
-        preview_placeholder = { "K", mode = "n", desc = "Preview placeholder" },
-        previous = { "<C-p>", mode = "n", desc = "Previous compose page" },
-        next = { "<C-n>", mode = "n", desc = "Next compose page" },
-      },
-    },
-  },
-}
-```
-
-Set `picker.adapter` to `"fzf-lua"`, `"snacks"`, or a custom selection function. When you insert a file, Wiremux first uses the adapter's `files()` picker. If that picker is not available, Wiremux shows its built-in file list with the active picker.
-
-</details>
-
-## Quick start
-
-### Step 1: Define your first target
-
-A **target** is a tmux pane or window that Wiremux manages. Add this minimal configuration:
-
-```lua
-require("wiremux").setup({
-  targets = {
-    definitions = {
-      -- A simple terminal
-      terminal = { kind = "pane", split = "horizontal" },
-    },
-  },
 })
 ```
 
-<details>
-<summary><strong>Target definition fields</strong></summary>
-
-| Field        | Type                            | Default        | Description                                                         |
-| ------------ | ------------------------------- | -------------- | ------------------------------------------------------------------- |
-| `cmd`        | `string?`                       | -              | Command to run when Wiremux creates the pane or window              |
-| `kind`       | `"pane"` \| `"window"` \| table | `"pane"`       | Target type. Use `{"pane","window"}` to select the type at run time |
-| `split`      | `"horizontal"` \| `"vertical"`  | `"horizontal"` | Split direction (panes only)                                        |
-| `split_mode` | `"before"` \| `"after"`         | `"after"`      | Split placement relative to source pane (panes only)                |
-| `shell`      | `boolean`                       | `true`         | `true`: types `cmd` into a shell. `false`: runs `cmd` directly      |
-| `label`      | `string` \| `function?`         | target name    | Display name in picker                                              |
-| `title`      | `string?`                       | label or name  | Tmux window name (windows only)                                     |
-
 </details>
 
-### Step 2: Create and use the target
+<details>
+<summary>Real-life configuration: AI tools, keymaps, and prompts</summary>
 
-Run `:Wiremux create`. Wiremux shows a list of your target definitions. Select `terminal` to open its tmux pane. You can also use Lua:
+Use this lazy.nvim specification instead of the minimal example.
+Change the tools, keys, and prompts to match your workflow.
+Install the AI tools you want to use. Remove definitions for tools you do not use.
 
-```lua
--- Create the target (opens a tmux pane)
-require("wiremux").create()
-
--- Send text to it
-require("wiremux").send("ls -la")
-```
-
-### Step 3: Add keyboard shortcuts
+Lowercase message keys add to a draft. Uppercase message keys send directly to the last target.
+This example enables Compose by default and saves the last three confirmed messages.
 
 ```lua
--- Using lazy.nvim keys:
-keys = {
-  -- Toggle terminal visibility
-  { "<leader>tt", function() require("wiremux").toggle() end, desc = "Toggle terminal" },
-  -- Send current file path
-  { "<leader>tf", function() require("wiremux").send("{file}") end, desc = "Send file path" },
-  -- Send visual selection
-  { "<leader>tv", function() require("wiremux").send("{selection}") end, mode = "x", desc = "Send selection" },
+local review_changes = "Review the changes in {file} for bugs and regressions."
+  .. "\nReport findings with file/line references."
+  .. "\nDo not modify files."
+  .. "\n\n{changes}"
+
+local prompts = {
+  { label = "Review file changes", value = review_changes },
+  { label = "Fix file diagnostics", value = "Fix the diagnostics in {file}:\n{diagnostics_all}" },
+  { label = "Fix line diagnostics", value = "Fix this diagnostic:\n{diagnostics}" },
+  { label = "Add docs", value = "Add documentation to {this}" },
+  { label = "Explain", value = "Explain {this}" },
+  { label = "Fix", value = "Fix {this}" },
+  { label = "Optimize", value = "How can {this} be optimized?" },
+  { label = "Review file", value = "Review {file} for issues" },
+  { label = "Write tests", value = "Write tests for {this}" },
+  { label = "Fix quickfix entries", value = "Help me fix these issues:\n{quickfix}" },
+}
+
+return {
+  "MuhametSmaili/wiremux.nvim",
+  cmd = "Wiremux",
+  opts = {
+    targets = {
+      definitions = {
+        pi = { cmd = "pi", kind = { "pane", "window" }, split = "horizontal", shell = false },
+        opencode = { cmd = "opencode", kind = { "pane", "window" }, split = "horizontal", shell = false },
+        claudecode = { cmd = "claude", kind = { "pane", "window" }, split = "horizontal", shell = false },
+        kiro = { cmd = "kiro-cli", kind = { "pane", "window" }, split = "horizontal", shell = false },
+      },
+    },
+    actions = {
+      send = { compose = true, behavior = "pick", focus = true, submit = false },
+    },
+    ui = {
+      compose = {
+        close_behavior = "hide",
+        on_new_payload = "append",
+        history_limit = 3,
+      },
+    },
+  },
+  keys = {
+    {
+      "<leader>aa",
+      function() require("wiremux").send("{this}") end,
+      mode = { "n", "x" },
+      desc = "Add context to draft",
+    },
+    {
+      "<leader>aA",
+      function() require("wiremux").send("{this}", { compose = false, behavior = "last", focus = true }) end,
+      mode = { "n", "x" },
+      desc = "Send context directly",
+    },
+    {
+      "<leader>ae",
+      function() require("wiremux").send() end,
+      desc = "Open or resume draft",
+    },
+    {
+      "<leader>ar",
+      function() require("wiremux").send(review_changes) end,
+      desc = "Compose review of file changes",
+    },
+    {
+      "<leader>aR",
+      function() require("wiremux").send(review_changes, { compose = false, behavior = "last", focus = true }) end,
+      desc = "Send review of file changes directly",
+    },
+    {
+      "<leader>af",
+      function() require("wiremux").send("{file}") end,
+      desc = "Add file reference to draft",
+    },
+    {
+      "<leader>aF",
+      function() require("wiremux").send("{file}", { compose = false, behavior = "last", focus = true }) end,
+      desc = "Send file reference directly",
+    },
+    {
+      "<leader>av",
+      function() require("wiremux").send("{selection}") end,
+      mode = "x",
+      desc = "Add selection to draft",
+    },
+    {
+      "<leader>aV",
+      function() require("wiremux").send("{selection}", { compose = false, behavior = "last", focus = true }) end,
+      mode = "x",
+      desc = "Send selection directly",
+    },
+    {
+      "<leader>ad",
+      function() require("wiremux").send("{diagnostics}") end,
+      mode = { "n", "x" },
+      desc = "Compose line diagnostics",
+    },
+    {
+      "<leader>aD",
+      function() require("wiremux").send("{diagnostics}", { compose = false, behavior = "last", focus = true }) end,
+      mode = { "n", "x" },
+      desc = "Send line diagnostics directly",
+    },
+    {
+      "<leader>ag",
+      function() require("wiremux").send("{diagnostics_all}") end,
+      mode = { "n", "x" },
+      desc = "Compose file diagnostics",
+    },
+    {
+      "<leader>aG",
+      function() require("wiremux").send("{diagnostics_all}", { compose = false, behavior = "last", focus = true }) end,
+      mode = { "n", "x" },
+      desc = "Send file diagnostics directly",
+    },
+    {
+      "<leader>ap",
+      function() require("wiremux").send(prompts) end,
+      mode = { "n", "x" },
+      desc = "Choose prompt for draft",
+    },
+    {
+      "<leader>aP",
+      function() require("wiremux").send(prompts, { compose = false, behavior = "last", focus = true }) end,
+      mode = { "n", "x" },
+      desc = "Choose prompt to send directly",
+    },
+    {
+      "<leader>ah",
+      function() require("wiremux").history() end,
+      desc = "Recover a Compose message",
+    },
+    {
+      "<leader>ac",
+      function() require("wiremux").create() end,
+      desc = "Create AI target",
+    },
+    {
+      "<leader>ao",
+      function() require("wiremux").focus({ behavior = "pick" }) end,
+      desc = "Focus AI target",
+    },
+    {
+      "<leader>ax",
+      function() require("wiremux").close() end,
+      desc = "Close AI target",
+    },
+    {
+      "ga",
+      function() return require("wiremux").send_motion({ compose = false }) end,
+      mode = { "n", "x" },
+      expr = true,
+      desc = "Send motion or selection directly",
+    },
+  },
 }
 ```
 
-### Understand the basic terms
+Press `<leader>ac` to create an AI target. Select a tool, then choose a pane or window.
+Use `<leader>aa` to collect context from several locations.
+Use `<leader>ae` to resume the draft without adding a page.
 
-Wiremux uses two main terms:
+Use `<leader>ar` to compose a review request for the current file's changes.
+The prompt asks for findings without file edits. `<leader>aR` sends that request directly.
 
-| Concept        | What it is                                              | Example                             |
-| -------------- | ------------------------------------------------------- | ----------------------------------- |
-| **Definition** | Configuration that tells Wiremux how to create a target      | `{ cmd = "claude", kind = "pane" }` |
-| **Instance**   | A running tmux pane or window, managed by Wiremux or not     | A Claude pane that is open in tmux     |
+Use `<leader>ap` to choose a prompt for the draft. `<leader>aP` sends the selected prompt directly.
+Use `<leader>ah` to recover a saved message.
 
-Wiremux stores definitions in your configuration. A managed instance has Wiremux target metadata; an unmanaged instance can be adopted. Instances remain available in tmux.
+File references contain paths, not file contents. Messages do not press Enter in the target.
+When you are ready to submit the message, press Enter in the target.
 
-## Sending text
+These mappings load Wiremux on first use. No extra picker plugin is required.
+History remains off by default outside this example.
 
-Use `send()` to send text to a target or to show a selection menu.
+</details>
 
-### Send text directly
+## Everyday use
 
-Send text directly to a target:
+### Send text
+
+Use `send()` in Lua or in a keymap:
 
 ```lua
--- Send the current file path
-require("wiremux").send("{file}")
-
--- Send with focus (jumps to the target pane)
-require("wiremux").send("{selection}", { focus = true })
-
--- Send a custom message
-require("wiremux").send("Hello from Neovim!")
+require("wiremux").send("Explain {this}")
 ```
 
-### Select text from a menu
+`{this}` adds the source location and any visual selection.
+Select code first to include it in the message.
 
-Pass a list of items to show a selection menu:
+<details>
+<summary>Send a selection, run a command, or choose a prompt</summary>
+
+Send only the selected text:
+
+```lua
+require("wiremux").send("{selection}", { focus = true })
+```
+
+Use `submit = true` to press Enter after the text:
+
+```lua
+require("wiremux").send("ls -la", { submit = true })
+```
+
+Pass a list to choose a prompt:
 
 ```lua
 require("wiremux").send({
@@ -242,39 +380,64 @@ require("wiremux").send({
 })
 ```
 
-Each item can contain these fields:
+Each item needs `value`. Optional fields include `label`, `visible`, `compose`, and `placeholders`.
+See `:help wiremux.send()` for all item fields.
 
-| Field          | Function                                                     | Example                                          |
-| -------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `value`        | **Required.** Specifies the text to send                     | `"Explain {file}"`                               |
-| `label`        | Specifies the item name in the picker                        | `"Explain file"`                                 |
-| `submit`       | Presses Enter after Wiremux sends the text                   | `true` (useful for commands)                     |
-| `visible`      | Controls whether Wiremux shows the item                      | `function() return vim.bo.filetype == "lua" end` |
-| `compose`      | Opens a draft; accepts `true` or session options             | `{ on_new_payload = "append" }`                  |
-| `placeholders` | Controls placeholder replacement; `false` sends literal text | `false`                                          |
-| `pre_keys`     | Specifies keys to send before the text                       | `"C-c"`, `{"C-c", "i"}`                          |
-| `post_keys`    | Specifies keys to send after the text                        | `"Escape"`, `{"Escape", "Enter"}`                |
-
-### Compose drafts
-
-Use compose mode to review and edit a placeholder template before you select a target:
+For keystrokes around the text, use `pre_keys` and `post_keys`:
 
 ```lua
-require("wiremux").send("Review {this}", { compose = true })
-
-require("wiremux").send("Review {selection}", {
-  compose = {
-    title = " Review Selection ",
-    close_behavior = "hide",
-    on_new_payload = "append",
-  },
+require("wiremux").send({
+  value = "my text",
+  pre_keys = { "C-c" },
+  post_keys = { "Escape" },
 })
 ```
 
-Set `on_new_payload = "append"` to collect text from multiple editor locations. Each new input creates a page. Use `<C-p>` and `<C-n>` in normal mode to move between pages. Use `<C-x>` to delete the current page. Wiremux then selects the next page. If you delete the last page, Wiremux selects the first page. If the draft has one page, `<C-x>` clears its text. Wiremux sends the pages with a blank line between them:
+</details>
+
+### Compose drafts
+
+Compose lets you edit a message before you select a target:
 
 ```lua
--- Map this in normal or visual mode, then invoke it from each location.
+require("wiremux").send("Review {this}", { compose = true })
+```
+
+In normal mode, press Enter to send the draft.
+In insert mode, Enter adds a line.
+
+**Unsent drafts last only for the current Neovim session.**
+
+<details>
+<summary>Default keys and page behavior</summary>
+
+| Key                 | Mode             | Action                                            |
+| ------------------- | ---------------- | ------------------------------------------------- |
+| Enter               | Normal           | Send all pages.                                   |
+| `q` / Escape        | Normal           | Close the draft according to its policy.          |
+| `Ctrl+s`            | Normal           | Hide the draft and append the next Compose input. |
+| `Ctrl+p` / `Ctrl+n` | Normal           | Select the previous / next page.                  |
+| `Ctrl+x`            | Normal           | Delete the current page.                          |
+| `Q`                 | Normal           | Discard the current page.                         |
+| `K`                 | Normal           | Preview the placeholder under the cursor.         |
+| `Ctrl+f`            | Normal or insert | Insert a file reference.                          |
+
+If one page remains, `Ctrl+x` clears it without closing the draft.
+`Q` discards that page and closes the draft.
+
+Press `K` again to enter the preview. Press `q` or Escape there to close it.
+
+The `close_behavior` option controls `q` and Escape.
+Its default is `"ask"`. The other choices are `"hide"` and `"discard"`.
+
+</details>
+
+<details>
+<summary>Collect notes from several locations</summary>
+
+Use this mapping in normal or visual mode:
+
+```lua
 vim.keymap.set({ "n", "x" }, "<leader>ar", function()
   require("wiremux").send("Review this context:\n{this}", {
     compose = {
@@ -282,96 +445,286 @@ vim.keymap.set({ "n", "x" }, "<leader>ar", function()
       close_behavior = "hide",
       on_new_payload = "append",
     },
-    target = "claude",
   })
 end)
 ```
 
-Press `<C-s>` in normal mode to save and hide the draft, then append the next non-empty compose payload. This one-time action bypasses `on_new_payload`; reopening the draft without text does not consume it. `A` keeps its native append-at-end-of-line behavior. Press `<CR>` in normal mode to send; there is no default insert-mode send binding.
+1. Select code at the first location.
+2. Press `<leader>ar`.
+3. Press `o` to add a line and enter insert mode.
+4. Type your comment.
+5. Press Escape to return to normal mode.
+6. Press `q` to hide the draft.
+7. Select code at another location.
+8. Press `<leader>ar` again to add a page.
 
-Press `Q` to discard. If the draft has more than one page, `Q` removes only the current page and keeps the others open. If the draft has one page, `Q` drops the draft and closes the window without the close prompt. Use `<C-x>` instead when you want to empty the last page but keep the window open.
+In normal mode, use `Ctrl+p` and `Ctrl+n` to review the pages.
+Wiremux sends them together, with a blank line between pages.
 
-Place the cursor on a placeholder and press `K` to preview its value. Press `K` again to focus the preview. Use `q` or `<Esc>` to close it. Wiremux shows `(empty)` for an empty value and a short message for an unavailable value. A `{changes}` preview uses diff syntax. The preview resolves the name once and does not change the page.
+Each page remembers its source location, selected text, and source line.
+Other values resolve when you confirm the draft.
 
-Wiremux keeps the placeholder template unchanged while you edit it. Each page stores the **origin** that it came from. One rule covers the whole model: **the origin holds frozen state, and everything else resolves when you send the draft.**
+Call `require("wiremux").send()` without text to reopen the draft.
+This call does not add a page.
 
-The origin holds the source path, row, column, visual selection, and the text of the source line. These values never change after Wiremux creates the page, so identical pages can produce different text from different editor locations. Every other value resolves at send time: buffer contents, diagnostics, Git output, `{buffers}`, and `{quickfix}`.
+By default, new text opens a choice dialog for an existing draft.
+`on_new_payload = "append"` removes that extra choice.
 
-It does not matter when you type a placeholder. A name in the initial text and a name that you add later follow the same rule. If no value is available for a name, the placeholder remains literal, and Wiremux tries again the next time you send.
+</details>
 
-`{diagnostics}` and `{diagnostics_all}` need the source buffer. They remain literal if you delete that buffer, unless Wiremux finds a loaded buffer with the same path. Every other placeholder survives, because `{line}` and `{selection}` are stored in the origin and `{changes}` reads the file from disk.
+History keeps recent messages for recovery and reuse. It is off by default.
 
-When a draft exists, `on_new_payload` accepts `"ask"`, `"keep"`, `"replace"`, or `"append"`. The dialog selects **Keep Draft** by default. A non-empty `send()` call updates the session configuration, callbacks, and delivery options. This update also occurs when you keep the existing pages. A `send()` call without text only reopens a hidden draft.
+<details>
+<summary>Save and reuse messages with history</summary>
 
-#### Compose keymaps and actions
+After you enable history:
 
-`ui.compose.keymaps` stays action-keyed. Each action accepts one mapping record or a list of records:
+- If a pane closes or delivery fails, you can recover the message.
+- You can review the text of a previous message.
+- You can send the same message to another pane.
+
+To keep the last three confirmed Compose messages, add this to your existing options:
+
+```lua
+ui = {
+  compose = {
+    history_limit = 3,
+  },
+},
+```
+
+1. Run `:Wiremux history`.
+2. Select a message to reopen it in Compose.
+3. In normal mode, press Enter to send it.
+4. If a target picker opens, choose a pane.
+
+For a Lua keymap, use `require("wiremux").history()` to open the same picker.
+
+You can edit the message before you send it.
+History reopens the final text as one page. Placeholders do not resolve again.
+
+Only confirmed Compose messages enter history. History stores their final text before delivery.
+
+Files live in `stdpath("state")/wiremux/history/`.
+A lower limit removes older entries on the next history access.
+A limit of `0` removes all saved entries on that access.
+
+See `:help wiremux-compose-history` for storage details.
+
+</details>
+
+### Placeholders
+
+A placeholder adds editor context to your message. These are all the built-in placeholders:
+
+| Placeholder         | Value                                 |
+| ------------------- | ------------------------------------- |
+| `{this}`            | Source location and visual selection. |
+| `{selection}`       | Selected code.                        |
+| `{file}`            | File path, not file contents.         |
+| `{filename}`        | File name without the directory.      |
+| `{position}`        | Source location as `file:line:col`.   |
+| `{line}`            | Source line text.                     |
+| `{diagnostics}`     | Diagnostics on the source line.       |
+| `{diagnostics_all}` | All diagnostics in the source buffer. |
+| `{quickfix}`        | Current quickfix entries.             |
+| `{buffers}`         | Names of loaded, listed buffers.      |
+| `{changes}`         | Git changes for the source file.      |
+
+An unavailable placeholder stays unchanged.
+Set `placeholders = false` on a send item to keep all tokens literal.
+See `:help wiremux-placeholders` for resolution details.
+
+<details>
+<summary>Custom placeholders</summary>
+
+Merge configuration examples into your existing options.
+A new `setup()` call replaces the previous configuration.
+
+Add custom resolvers under `context.resolvers`:
 
 ```lua
 require("wiremux").setup({
-  ui = {
-    compose = {
-      keymaps = {
-        send = { "<leader>s", mode = "n", desc = "Send draft" },
-        close = {
-          { "q", mode = "n" },
-          { "<C-c>", mode = { "n", "i" } },
-        },
-        preview_placeholder = {}, -- disable this action's mappings
-      },
+  context = {
+    resolvers = {
+      git_branch = function()
+        local result = vim.system({ "git", "branch", "--show-current" }, { text = true }):wait()
+        return result.code == 0 and vim.trim(result.stdout) or nil
+      end,
     },
   },
 })
 ```
 
-An omitted action inherits its mappings. A nonempty action entry replaces the entire inherited entry, including its modes, descriptions, and list entries. It does not add aliases to the old entry.
+Use `{git_branch}` in your messages.
+Resolver names start with a letter or underscore and contain only letters, digits, or underscores.
 
-An empty action entry (`send = {}`) disables that action's mappings. An empty outer table (`keymaps = {}`) does not clear defaults. `keymaps = false` and action entries such as `send = false` are invalid.
+Return a string to replace the placeholder.
+Return `nil` to keep it unchanged, or an empty string to remove it.
 
-Set the global boolean `ui.compose.use_default_keymaps` to `false` to omit all shipped bindings in the main Compose buffer. This includes the normal-mode `<C-o>` and `<C-i>` no-op blockers. Its default is `true`.
+Resolvers can read the source `origin` argument.
+It contains `bufnr`, `path`, `row`, `col`, `selection`, and `line`.
+These fields stay fixed for each Compose page. Other editor values resolve on confirmation.
+
+Keep resolvers fast. Do not change editor state from a resolver.
+Each `setup()` call replaces custom resolvers and retains built-in resolvers.
+
+</details>
+
+## Customize
+
+Merge these options into your existing configuration.
+
+<details>
+<summary>Target definitions and selection</summary>
+
+Add definitions for your tools under `targets.definitions`:
 
 ```lua
-require("wiremux").setup({
-  ui = {
-    compose = {
-      use_default_keymaps = false,
-      keymaps = {}, -- no configured bindings either
+targets = {
+  definitions = {
+    claude = { cmd = "claude", kind = { "pane", "window" }, shell = false },
+    opencode = { cmd = "opencode", kind = { "pane", "window" }, shell = false },
+  },
+},
+```
+
+`kind` selects a pane or window. A list lets you choose at creation.
+`shell = false` runs the program directly.
+
+To select a named target, pass `target`:
+
+```lua
+require("wiremux").send("{this}", { target = "claude" })
+```
+
+Wiremux reuses matching instances or creates one from the definition.
+Filters still apply. Multiple matches can open a picker.
+
+If a definition has no `cmd`, create its terminal before you send arbitrary text.
+Otherwise, Wiremux can use the first payload as its startup command.
+
+| Option     | Choices                                   | Purpose                                                       |
+| ---------- | ----------------------------------------- | ------------------------------------------------------------- |
+| `behavior` | `pick`, `last`, `all`                     | Choose one target, reuse the last target, or use all matches. |
+| `mode`     | `auto`, `instances`, `definitions`, `all` | Choose where `send()` and `toggle()` look for targets.        |
+
+For `send()`, `auto` prefers managed instances.
+If none pass the filter, Wiremux offers unmanaged panes and definitions.
+For a mixed send picker, use `mode = "all"` with `behavior = "pick"`.
+
+When matching managed instances exist, `behavior = "all"` sends to all of them.
+If none match, Wiremux can offer adoption or creation.
+`toggle()` does not adopt unmanaged panes.
+
+See `:help wiremux-configuration` for target fields and selection options.
+
+</details>
+
+<details>
+<summary>Pickers and filters</summary>
+
+If neither fzf-lua nor Snacks is available, Wiremux uses `vim.ui.select`.
+To choose an adapter, add this field to your options:
+
+```lua
+picker = {
+  adapter = "fzf-lua", -- or "snacks"
+},
+```
+
+By default, managed targets belong to the current tmux pane.
+Adoption candidates include same-session unmanaged panes and targets whose owner no longer exists.
+
+Use a filter to change the candidate list:
+
+```lua
+picker = {
+  instances = {
+    filter = function() return true end,
+  },
+},
+```
+
+This filter includes candidates from other sessions. Wiremux excludes the current pane.
+`filter = nil` retains the default filter.
+
+Unmanaged panes can have `target = nil`.
+Before you use `target` as a string, make sure that `inst.managed` is true.
+
+See `:help wiremux-filters` for instance and definition filters.
+
+</details>
+
+<details>
+<summary>Compose keymaps</summary>
+
+Map each action to one keymap or a list of keymaps:
+
+```lua
+ui = {
+  compose = {
+    keymaps = {
+      send = { { "<F5>", mode = { "n", "i" } } },
+      close = { { "<Esc>", mode = "n" } },
+      preview_placeholder = {},
     },
   },
+},
+```
+
+An omitted action inherits its mappings. A supplied entry replaces all mappings for that action.
+An empty action entry disables its mappings.
+An empty outer `keymaps` table does not clear defaults.
+
+Set `ui.compose.use_default_keymaps = false` to omit all shipped Compose bindings.
+Explicitly configured mappings still apply. This switch is global-only.
+
+Native replacements, option changes, and deletions survive draft refreshes.
+See `:help wiremux-compose-keymaps` for the full rules.
+
+</details>
+
+<details>
+<summary>Native Compose mappings and actions</summary>
+
+Before you open Compose, register this event handler:
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "WiremuxComposeOpen",
+  callback = function(event)
+    local buf = event.data.buf
+
+    vim.keymap.set("n", "<F5>", function()
+      require("wiremux").compose.send({ buf = buf })
+    end, { buffer = buf, desc = "Send draft" })
+  end,
 })
 ```
 
-Explicitly configured mappings still apply with defaults off. Per-send `compose.keymaps` remains supported and uses the same per-action replacement rules over global mappings. `use_default_keymaps` is global only, not a runtime Compose option.
+The event runs after Wiremux installs its mappings.
+It runs for new or restored windows, not when Wiremux only focuses a visible window.
 
-Native replacements and deletions survive session refresh and reopen. Wiremux does not reclaim a user key through an alternate spelling.
+Pass `{ buf = buf }` so an old callback cannot act on a newer draft.
 
-The footer shows only bindings for built-in actions that Wiremux still owns. Custom callbacks get no automatic action labels.
+`require("wiremux").compose` exposes draft actions such as `send()`, `close()`, `previous()`, and `next()`.
+Root `require("wiremux").close()` closes a tmux target, not a draft.
 
-**Public actions**
+A true action result means that the handler accepted the action, not that delivery succeeded.
+See `:help wiremux-compose-api` for all actions and return values.
 
-Use `require("wiremux").compose` or `require("wiremux.compose")` for `send`, `close`, `append_next`, `discard`, `files`, `delete_page`, `preview_placeholder`, `previous`, and `next`.
+</details>
 
-Each method accepts optional `{ buf = integer }`. An omitted `buf` or `buf = 0` uses the current buffer. For example, `require("wiremux").compose.send({ buf = 0 })` invokes the current draft's send handler. A valid action focuses the Compose window; Wiremux checks the session again after window-enter autocmds run.
+<details>
+<summary>Placeholder completion with blink.cmp or nvim-cmp</summary>
 
-Each method returns `accepted, reason`. `accepted = true` means the handler accepted the action, not that sending or delivery succeeded. A rejected action returns `false` and `"no_session"`, `"stale_buffer"`, `"hidden"`, or `"busy"`.
-
-No active session, a mismatched buffer or changed focus, a hidden draft, or a nonediting session prevents the handler from running. Actions never fall back to another draft. Invalid arguments raise an error.
-
-`compose.close()` respects `close_behavior`. Root `require("wiremux").close()` still closes a tmux target. See `:help wiremux-compose-api` for each action.
-
-For a native send callback, see [Customize compose when it opens](#customize-compose-when-it-opens).
-
-#### Placeholder completion
-
-Wiremux provides optional native sources for **blink.cmp** and **nvim-cmp**. In compose, type `{` to see built-in and custom placeholders, then keep typing to filter them. Accepting a suggestion inserts the complete `{name}` and replaces any existing closing brace. Enable `preview` to show the selected placeholder's resolved value in the documentation popup while you type.
-
-Completion follows the current compose page. Pages with `placeholders = false`, including reopened history, do not offer placeholder suggestions.
-
-The configurations below defer importing Wiremux's completion modules until you enter compose. Keep Wiremux's usual lazy-loading triggers (for example, `keys` or `cmd = "Wiremux"`); it does not need to be a dependency of your completion plugin.
+Wiremux offers optional completion sources for Compose.
+They suggest placeholders without executing their resolvers.
 
 **blink.cmp**
 
-Merge this into your blink.cmp options, keeping your usual source list:
+Merge these settings with your existing sources:
 
 ```lua
 completion = { documentation = { auto_show = true } },
@@ -387,17 +740,20 @@ sources = {
     wiremux = {
       name = "Wiremux",
       module = "wiremux.completion.blink",
-      opts = { preview = true }, -- opt in to resolved documentation
+      opts = { preview = true },
     },
   },
 },
 ```
 
-The buffer check belongs in source selection: blink imports a provider before checking its `enabled` callback. Compose uses the `markdown` filetype; if you override `sources.per_filetype.markdown`, inherit the defaults with `inherit_defaults = true` or apply the same conditional selection there.
+This source check delays the Wiremux import until you enter Compose.
+blink imports a provider before it checks the `enabled` callback for that provider.
+For a Markdown source override, use `inherit_defaults = true` or the same Compose check.
 
 **nvim-cmp**
 
-Add `{ name = "wiremux" }` to your existing cmp sources. Then put this in your cmp configuration, after cmp loads:
+Add `{ name = "wiremux" }` to your sources, including any Markdown override.
+After cmp loads, register the source:
 
 ```lua
 local function register_wiremux()
@@ -413,341 +769,64 @@ vim.api.nvim_create_autocmd("BufEnter", {
 register_wiremux()
 ```
 
-The immediate check handles cmp loading while compose is already open; `BufEnter` handles opening or returning to compose later. Registration is idempotent. If you configure cmp sources separately for Markdown, include `wiremux` in that list too. Both integrations use your completion plugin's existing mappings.
+The immediate call handles an open Compose buffer. `BufEnter` handles later visits.
 
-**Resolved previews and size limits**
+With `preview = true`, completion documentation shows up to 10 lines and 2,048 bytes.
+These limits affect the display, not the message that you send.
+Preview resolvers run synchronously. Omit `preview` for descriptions only.
 
-The examples opt in to resolved documentation. With `preview = true`, the selected value is limited to **10 lines and 2,048 bytes**, with a truncation notice for longer output. To customize these limits, replace `preview = true` with:
+Keep your usual Wiremux lazy-loading triggers.
+See `:help wiremux-completion` for custom limits and integration details.
 
-```lua
-preview = { max_lines = 15, max_bytes = 4096 }
-```
+</details>
 
-The limits apply to the displayed value; they preserve UTF-8 characters and leave the inserted placeholder and eventual payload intact. `{changes}` uses diff syntax. Empty and unavailable values get a short status message. The popup uses the current page's source origin, just like `K`; live values may change again before sending.
+<details>
+<summary>Statusline</summary>
 
-Generating suggestions never runs resolvers. With previews enabled, the completion engine resolves the requested item when it asks for documentation (and may also do so on acceptance). Resolvers are synchronous, so expensive custom resolvers or Git queries can still delay a preview; the size limit bounds display output, not resolver work. Omit `preview` or set it to `false` for descriptions only.
-
-Blink needs `completion.documentation.auto_show = true` to open the popup automatically. nvim-cmp opens documentation by default; keep `view.docs.auto_open = true` if you override that setting. Move through suggestions to inspect their values as you write.
-
-#### Recover a compose send
-
-Wiremux keeps the four most recent confirmed compose sends by default. Run `:Wiremux history` to pick one, reopen it as a single compose page, edit it, and send it again. Picker rows show the time, payload size, and first non-empty line. When the fzf-lua or Snacks preview window is enabled, it lazily loads only the highlighted payload. Direct sends are not stored.
-
-History stores the final resolved payload—the same text prepared for delivery—so multi-page drafts reopen as one page and placeholder-shaped text stays literal. This makes retries stable even if buffers, diagnostics, or `{changes}` have changed since the original send.
-
-Metadata lives in `stdpath("state")/wiremux/history/index.json`. Each payload has its own `.txt` file in that directory, so listing history reads only the small index; an enabled preview loads only the highlighted payload. These files can contain source code and other sensitive context. Set `ui.compose.history_limit` to change the retained count. Lowering it prunes older entries on the next history access; `0` removes stored entries and disables history.
-
-Wiremux selects the compose value in this order:
-
-1. The item-level `compose` value.
-2. The call-level `opts.compose` value.
-3. The `actions.send.compose` value.
-
-Wiremux uses the first available value. It does not merge tables from these three levels. Wiremux merges the selected table with the session fields from `ui.compose`.
-
-#### Customize compose when it opens
-
-Wiremux emits the `User` event `WiremuxComposeOpen` after it configures and focuses a compose window and installs its mappings. Use this event for native callbacks. No `on_attach` or `<Plug>` API is required.
-
-Register the autocmd before you open Compose:
-
-```lua
-vim.api.nvim_create_autocmd("User", {
-  pattern = "WiremuxComposeOpen",
-  callback = function(event)
-    local buf = event.data.buf
-    local win = event.data.win
-
-    vim.wo[win].spell = true
-    vim.keymap.set("n", "<leader>cs", function()
-      require("wiremux").compose.send({ buf = buf })
-    end, { buffer = buf, desc = "Send draft" })
-    vim.keymap.set("n", "<leader>cc", function()
-      vim.api.nvim_buf_set_lines(buf, 0, 0, false, {
-        "Please review the following:",
-        "",
-      })
-    end, { buffer = buf, desc = "Insert review prompt" })
-
-    vim.cmd("startinsert!")
-  end,
-})
-```
-
-The event data contains `buf`, `win`, and `reopened`. For a new window, `reopened` is `false`. For a restored hidden window, `reopened` is `true`.
-
-Wiremux does not emit the event when it only focuses or reconfigures a visible window. The send callback supplies `opts.buf` so a stale callback cannot act on another draft.
-
-### Send keystrokes before and after text
-
-Some TUI applications require keystrokes before or after pasted text. For example, use `C-c` to cancel current input. Use `Escape` to return to a neutral state after Wiremux pastes the text:
-
-```lua
--- Cancel current input before pasting, return to normal state after
-require("wiremux").send({
-  value = "my text",
-  pre_keys = { "C-c" },
-  post_keys = { "Escape" },
-})
-
--- Vim-mode editors: enter insert mode before pasting, Escape after
-require("wiremux").send({
-  value = "my text",
-  pre_keys = { "i" },
-  post_keys = { "Escape" },
-})
-
--- Per-call opts: all items in this keymap use the same keys
-require("wiremux").send({
-  { label = "Explain", value = "Explain {this}" },
-  { label = "Review", value = "Review {changes}" },
-}, { pre_keys = { "i" }, target = "claude" })
-```
-
-Item-level `pre_keys` and `post_keys` values override call-level values.
-
-## Placeholders
-
-Wiremux replaces `{placeholders}` when it sends the text. Put each placeholder name in one pair of braces. The name must match `[A-Za-z_][A-Za-z0-9_]*`.
-
-| Placeholder         | Replacement                                    |
-| ------------------- | ---------------------------------------------- |
-| `{file}`            | current buffer path                            |
-| `{filename}`        | basename of `{file}`                           |
-| `{position}`        | `file:line:col` (line and column start at 1)   |
-| `{line}`            | current line text                              |
-| `{selection}`       | visual selection (empty if not in visual mode) |
-| `{this}`            | `{position}` plus `{selection}` when available |
-| `{diagnostics}`     | diagnostics on current line                    |
-| `{diagnostics_all}` | all diagnostics in current buffer              |
-| `{quickfix}`        | formatted quickfix list                        |
-| `{buffers}`         | list of listed, loaded buffers                 |
-| `{changes}`         | `git diff HEAD -- {file}` (or "No changes")    |
-
-Wiremux handles resolver results as follows:
-
-| Resolver outcome  | Resulting text               |
-| ----------------- | ---------------------------- |
-| Non-empty string  | Replaces the placeholder     |
-| Empty string `""` | Removes the placeholder text |
-| `nil`             | Placeholder remains literal  |
-| Resolver error    | Placeholder remains literal  |
-| Non-string value  | Placeholder remains literal  |
-| Unknown name      | Placeholder remains literal  |
-
-Wiremux resolves each name one time for each send, and only for the item that you send. It does not resolve a placeholder before you choose a target, so a library of ten items that contains `{changes}` starts one `git diff` process instead of ten. Set `placeholders = false` on an item to send text such as `{file}` without replacement; that also keeps names literal if you add them in compose.
-
-Wiremux captures the source origin one time for each `send()` call, before it opens a picker or a compose window. It then resolves the text of the item that you send. For compose drafts, Wiremux keeps the original text in each page and resolves each page against that page's origin when you confirm the draft.
-
-You can add custom placeholders. A resolver name must start with a letter or underscore. The remaining characters must be letters, digits, or underscores:
-
-```lua
-require("wiremux").setup({
-  context = {
-    resolvers = {
-      git_branch = function()
-        local result = vim.system({ "git", "branch", "--show-current" }, { text = true }):wait()
-        return result.code == 0 and vim.trim(result.stdout) or nil
-      end,
-      source_path = function(origin)
-        return origin and origin.path or vim.api.nvim_buf_get_name(0)
-      end,
-    },
-  },
-})
-```
-
-Each `setup()` call replaces the previous set of custom resolvers. Built-in resolvers remain available. Keep each resolver fast. Do not change editor state from a resolver.
-
-Wiremux calls a resolver with the origin of the text that it sends. The origin contains `bufnr`, `path`, `row`, `col`, `selection`, and `line`. The row starts at one. The column is a zero-based byte index. Wiremux passes a copy, so a resolver cannot change the stored origin.
-
-Read the origin when a value must not change after the send starts. A zero-argument resolver still works, but it runs when Wiremux sends the text, so it reads the editor state at that moment. This difference matters only for a compose draft that stays open, because a direct send resolves immediately.
-
-## Advanced configuration
-
-### Target resolution options
-
-When you run an action, Wiremux selects the targets to show. Use these four options to control the selection:
-
-**1. Specific target:** Use a named target without a picker:
-
-```lua
-require("wiremux").send("{this}", { target = "claude" })
-require("wiremux").focus({ target = "claude" })
-```
-
-Wiremux uses matching instances when they exist. If no instance matches, Wiremux creates one from the definition. Filters still apply. Wiremux cannot find a target that a filter excludes.
-
-**2. Behavior:** Select how Wiremux handles multiple targets:
-
-| Behavior | Result                  | Use it when                         |
-| -------- | ----------------------- | ----------------------------------- |
-| `pick`   | Shows the target picker | You select a target for each action |
-| `last`   | Uses the latest target  | You repeat an action                |
-| `all`    | Uses every target       | You send the text to all targets    |
-
-**3. Mode:** Select where Wiremux looks for targets. This option applies only to `send()` and `toggle()`:
-
-| Mode          | Result                            | Use it when                         |
-| ------------- | --------------------------------- | ----------------------------------- |
-| `auto`        | Managed instances; otherwise unmanaged instances and definitions | You want the prioritized default |
-| `instances`   | Shows only managed instances                           | You want existing Wiremux targets   |
-| `definitions` | Shows only target definitions                           | You want Wiremux to create a target |
-| `all`         | Shows managed/unmanaged instances and definitions       | You want to send, adopt, or create  |
-
-For `send()`, `auto` keeps the picker quiet once managed instances exist: unmanaged instances and definitions are offered only when no managed instance passes the filter. `mode = "all"` with `behavior = "pick"` shows every supported candidate. `toggle()` does not offer unmanaged instances because it cannot adopt them. Send picker rows indicate what selection will do:
-
-```text
-[m] 1:2 claude [opencode]  managed instance: send
-[~] 1:3 opencode           unmanaged instance: adopt, then send
-[+] claude                 definition: create, then send
-```
-
-`1:2` is the tmux `window_index:pane_index`. Other sessions include their session ID, for example `$2:1:2`, so identical positions remain distinct. Adopting an unmanaged instance assigns internal metadata such as `pane-5`, but generated names are hidden from picker labels in favor of the location and running command. It does not create a tmux pane. `behavior = "all"` still sends only to managed instances; it never adopts or creates targets implicitly.
-
-A function-valued `targets.definitions.*.label` overrides the entire managed row, with no added marker, location, or command. String labels replace only the target name.
-
-**4. Filters:** Control which instances and definitions Wiremux shows:
-
-The same instance filter receives managed and unmanaged candidates. `inst.managed` distinguishes them. By default, Wiremux includes managed targets created from the current tmux pane and unmanaged instances from the current tmux session. Unmanaged candidates are used by `send()` as the `auto` fallback and by `mode = "all"`:
-
-> **Migration note:** During the `auto` fallback and in `mode = "all"`, `filter.instances` can receive an unmanaged instance with `target = nil`. This intentionally broadens the callback contract. Check `inst.managed` before using `target` as a string.
-
-Managed instances are sorted with `picker.instances.sort`. Unmanaged instances remain grouped after them in backend query order, followed by definitions.
-
-```lua
-picker = {
-  instances = {
-    filter = function(inst, state)
-      if not inst.managed then
-        return inst.session_id == state.session_id
-      end
-      return inst.origin == state.origin_pane_id
-    end,
-  },
-}
-```
-
-You can replace this filter. Use an always-true function to include every candidate; `filter = nil` in `setup()` retains the default filter. The current pane is always excluded.
-
-```lua
--- Show all managed and unmanaged instances returned by the backend
-picker = {
-  instances = {
-    filter = function() return true end,
-  },
-}
-
--- Only show targets from current directory
-picker = {
-  instances = {
-    filter = function(inst, state)
-      return inst.managed and inst.origin_cwd == vim.fn.getcwd()
-    end,
-  },
-}
-```
-
-### Complete configuration example
-
-Use this example as a starting point for AI assistants, project commands, and target filters:
+Add the target count to lualine:
 
 ```lua
 {
-  "MSmaili/wiremux.nvim",
-  opts = {
-    picker = { adapter = "fzf-lua" },
-    targets = {
-      definitions = {
-        -- AI assistants
-        claude = { cmd = "claude", kind = { "pane", "window" }, shell = false },
-        opencode = { cmd = "opencode", kind = { "pane", "window" }, shell = false },
-        -- Interactive shell
-        shell = { kind = { "pane", "window" }, shell = true },
-        -- Quick command runner
-        quick = { kind = { "pane", "window" }, shell = false },
-      },
-    },
-  },
-  keys = {
-    { "<leader>aa", function() require("wiremux").toggle() end, desc = "Toggle target" },
-    { "<leader>ac", function() require("wiremux").create() end, desc = "Create target" },
-    -- Send context
-    { "<leader>af", function() require("wiremux").send("{file}") end, desc = "Send file" },
-    { "<leader>at", function() require("wiremux").send("{this}") end, mode = { "x", "n" }, desc = "Send this" },
-    { "<leader>av", function() require("wiremux").send("{selection}") end, mode = "x", desc = "Send selection" },
-    { "<leader>ad", function() require("wiremux").send("{diagnostics}") end, desc = "Send diagnostics" },
-    -- Send motion (works like an operator: ga + motion; for example, gaip sends a paragraph)
-    { "ga", function() require("wiremux").send_motion() end, desc = "Send motion to target" },
-    -- AI prompts picker
-    {
-      "<leader>ap",
-      function()
-        require("wiremux").send({
-          { label = "Review changes", value = "Can you review my changes?\n{changes}" },
-          { label = "Fix diagnostics", value = "Can you help me fix this?\n{diagnostics}", visible = function() return require("wiremux.context").is_available("diagnostics") end },
-          { label = "Explain", value = "Explain {this}" },
-          { label = "Write tests", value = "Can you write tests for {this}?" },
-        })
-      end,
-      mode = { "n", "x" },
-      desc = "AI prompts",
-    },
-    -- Project commands (only show "quick" target)
-    {
-      "<leader>ar",
-      function()
-        require("wiremux").send({
-          { label = "npm test", value = "npm test; exec $SHELL", submit = true, visible = function() return vim.fn.filereadable("package.json") == 1 end },
-          { label = "go test", value = "go test ./...", submit = true, visible = function() return vim.bo.filetype == "go" end },
-        }, { mode = "definitions", filter = { definitions = function(name) return name == "quick" end } })
-      end,
-      desc = "Run command",
-    },
-  },
+  require("wiremux").statusline.component(),
+  padding = { left = 1, right = 1 },
 }
 ```
 
-## Actions and commands
-
-Use Lua functions in keymaps and Lua code. Use Vim commands on the command line:
-
-| Lua Function    | Vim Command            | What it does                              | Common use case                                            |
-| --------------- | ---------------------- | ----------------------------------------- | ---------------------------------------------------------- |
-| `send()`        | `:Wiremux send <text>` | Sends text to a target                    | Send code, prompts, or commands to an AI or terminal       |
-| `send_motion()` | `:Wiremux send-motion` | Sends text covered by a motion (operator) | Works like `y`: map to `ga`, then `gaip` sends a paragraph |
-| —               | `:Wiremux history`     | Reopens a confirmed compose send          | Recover, edit, and resend a recent payload                 |
-| `create()`      | `:Wiremux create`      | Creates a new target from a definition    | Start a new AI assistant or terminal pane                  |
-| `toggle()`      | `:Wiremux toggle`      | Shows or hides the last used target       | Show or hide an AI assistant or terminal                   |
-| `focus()`       | `:Wiremux focus`       | Moves focus to a target                   | Move to your terminal or AI assistant                      |
-| `close()`       | `:Wiremux close`       | Closes a target                           | Stop an AI assistant or terminal                           |
-| `adopt()`       | `:Wiremux adopt`       | Makes Wiremux manage an existing pane     | Add an existing pane to Wiremux                            |
-
-`send_motion()` sends captured source with `placeholders = false`, so placeholder-shaped code such as `{file}` remains literal.
-
-### Adopt existing panes
-
-Use `:Wiremux adopt` or `require("wiremux").adopt()` to make Wiremux manage an existing tmux pane. By default, the picker shows all panes in the current tmux session. It includes unmanaged panes but excludes the current pane.
-
-Wiremux gives each unmanaged pane a generated target name, such as `pane-3`. Set `target` to use a specific target name:
+For heirline or feline, use the component as a provider:
 
 ```lua
-require("wiremux").adopt({ target = "terminal" })
+{ provider = require("wiremux").statusline.component() }
 ```
 
-For a Lua call, `filter.instances` replaces the default adopt filter. Use this option to include panes from other sessions in the queried pane list:
+<img width="221" height="55" alt="Wiremux target count in the statusline" src="https://github.com/user-attachments/assets/c95f24b8-a121-4b75-a83c-07b1639cb75f" />
 
-```lua
-require("wiremux").adopt({
-  filter = {
-    instances = function()
-      return true -- all queried panes except the current pane
-    end,
-  },
-})
-```
+`statusline.get_info()` returns `{ loading, count, last_used }` for custom displays.
 
-Combine `target` with a filter to give matching panes a known target name:
+</details>
+
+## Commands and help
+
+Use `require("wiremux")` for Lua actions or `:Wiremux` on the command line:
+
+| Lua action  | Command                | Purpose                    |
+| ----------- | ---------------------- | -------------------------- |
+| `send()`    | `:Wiremux send <text>` | Send text.                 |
+| `create()`  | `:Wiremux create`      | Create a target.           |
+| `toggle()`  | `:Wiremux toggle`      | Show or hide a target.     |
+| `focus()`   | `:Wiremux focus`       | Focus a target.            |
+| `close()`   | `:Wiremux close`       | Close a target.            |
+| `adopt()`   | `:Wiremux adopt`       | Manage an existing pane.   |
+| `history()` | `:Wiremux history`     | Recover a Compose message. |
+
+For motion mappings, see `:help wiremux-howto-send-motion`.
+
+<details>
+<summary>Adopt an existing pane</summary>
+
+Run `:Wiremux adopt` to choose an existing pane.
+Wiremux adds its metadata without a new pane. Wiremux excludes the current pane.
+
+To assign a name and filter the candidates, use Lua:
 
 ```lua
 require("wiremux").adopt({
@@ -760,67 +839,18 @@ require("wiremux").adopt({
 })
 ```
 
-Use `format_item` to change the rows in the adopt picker:
+The default adopt picker uses the current tmux session.
+A custom filter replaces that default.
+See `:help wiremux.adopt()` for filtering and row formatting.
 
-```lua
-require("wiremux").adopt({
-  format_item = function(pane)
-    return string.format("%s %s %s", pane.target or "unmanaged", pane.id, pane.running_command or "")
-  end,
-})
-```
+</details>
 
-**Tip:** Lua functions support placeholders, options, and dynamic content. Vim commands are useful on the command line and in Vimscript mappings.
-
-## Statusline
-
-Show the number of active Wiremux targets in your statusline.
-
-```lua
--- lualine
-{
-  require("wiremux").statusline.component(),
-  padding = { left = 1, right = 1 },
-}
-
--- heirline / feline
-{ provider = require("wiremux").statusline.component() }
-```
-
-<img width="221" height="55" alt="image" src="https://github.com/user-attachments/assets/c95f24b8-a121-4b75-a83c-07b1639cb75f" />
-
-Use `get_info()` to create a custom statusline component:
-
-```lua
-function()
-  local info = require("wiremux").statusline.get_info()
-  if info.count == 0 then return "" end
-  local icon = info.last_used.kind == "window" and "󰖯" or "󰆍"
-  return string.format("%s %d", icon, info.count)
-end
-```
-
-Statusline API:
-
-- `statusline.get_info()` returns `{ loading, count, last_used }`.
-- `statusline.component()` returns a function for lualine.
-- `statusline.refresh()` refreshes the statusline immediately.
-
-## Persistence
-
-Wiremux stores its state in tmux pane variables, not in Neovim. Targets remain available after you restart Neovim. Multiple Neovim instances can share the same targets.
-
-## Troubleshooting
-
-- Run `:checkhealth wiremux`
-- Verify that Neovim runs inside tmux and that `$TMUX` is set
-
-## Help
-
-- `:h wiremux`
+- Run `:checkhealth wiremux` for setup problems.
+- Make sure that Neovim runs inside tmux and that `$TMUX` is set.
+- Read `:help wiremux` or the [reference manual](doc/wiremux.txt) for the full API and configuration.
 
 ## Credits
 
-- [folke/sidekick.nvim](https://github.com/folke/sidekick.nvim) inspired the project and some implementation patterns.
+[folke/sidekick.nvim](https://github.com/folke/sidekick.nvim) inspired the project and some implementation patterns.
 
 Development included AI-assisted tools. The maintainers reviewed and adjusted all generated code.
