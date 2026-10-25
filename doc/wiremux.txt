@@ -279,19 +279,32 @@ native mappings through |wiremux-compose-open-event|.
 Compose history ~
                                              *wiremux-compose-history*
 
-Wiremux keeps four confirmed compose sends by default. `:Wiremux history`
-opens a picker whose rows show the time, payload size, and first non-empty
-line. An enabled fzf-lua or Snacks preview window lazily loads only the
-highlighted payload. Selecting one opens the final resolved payload as one
-literal compose page. Multi-page drafts are therefore flattened, and
-placeholder-shaped text is not resolved again. Direct sends are not stored.
+History keeps recent messages for recovery and reuse. It is off by default.
+Set `ui.compose.history_limit = 3` to keep the last three confirmed Compose
+messages. Merge this field into your existing configuration:
+>lua
+  ui = {
+    compose = {
+      history_limit = 3,
+    },
+  },
+<
+History can recover a message after a pane closes or delivery fails. You can
+also review a previous message or send it to another pane.
 
-Metadata is stored in `stdpath("state")/wiremux/history/index.json`; each
-payload uses its own `.txt` file, so listing reads only the small index and an
-enabled preview loads only the highlighted payload. The files can contain
-sensitive source context. Set `ui.compose.history_limit`
-to change the retained count. Lowering it prunes older entries on the next
-history access; 0 removes stored entries and disables history.
+Run `:Wiremux history` or call |wiremux.history()| to choose a message and
+reopen it in Compose. You can edit it before you send it. History restores the
+final text as one literal page, not the original page boundaries or live
+placeholders. Only confirmed Compose messages enter history. History stores
+the text before delivery.
+
+Picker rows show the time, payload size, and first non-empty line. An enabled
+fzf-lua or Snacks preview window lazily loads only the highlighted payload.
+Metadata lives in `stdpath("state")/wiremux/history/index.json`; each payload
+has a separate `.txt` file.
+
+Lowering the limit removes older entries on the next history access. A limit
+of 0 removes all saved entries on that access and disables history.
 
 Customize compose on open ~
                                          *wiremux-compose-open-event*
@@ -444,7 +457,7 @@ added marker, location, or command. String labels replace only the target name:
       compose = {
         close_behavior = "hide", -- "ask" | "hide" | "discard"
         on_new_payload = "append", -- "ask" | "keep" | "replace" | "append"
-        history_limit = 4, -- resolved compose sends retained on disk; 0 disables
+        history_limit = 0, -- off by default; set 3 to keep recent Compose messages
         use_default_keymaps = true, -- global only
         keymaps = {
           append_next = { "<C-s>", mode = "n" },
@@ -1003,6 +1016,15 @@ wiremux.send({text|items}, {opts})
         `[+]` and create a target when selected. In either mode,
         {opts.filter.instances} can receive target=nil; branch on `inst.managed`
         before treating `inst.target` as a string.
+
+                                                     *wiremux.history()*
+wiremux.history()
+        Open the same picker as |:Wiremux-history| to recover, edit, or resend
+        a saved Compose message. Selection reopens the final text as one
+        literal page; it does not send the message automatically.
+
+        History is off by default. Set {ui.compose.history_limit} to a positive
+        number to save recent confirmed messages. See |wiremux-compose-history|.
 
                                                      *wiremux.focus()*
 wiremux.focus({opts})

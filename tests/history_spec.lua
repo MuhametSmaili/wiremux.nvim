@@ -38,6 +38,29 @@ describe("compose history storage", function()
 		package.loaded["wiremux.history"] = nil
 	end)
 
+	it("does not create history files with the default configuration", function()
+		config.setup({ log_level = "off" })
+
+		assert.is_true(history.add("not retained"))
+
+		assert.are.same({}, assert(history.list()))
+		assert.is_nil(vim.uv.fs_stat(root))
+	end)
+
+	it("keeps the last three messages when history is enabled", function()
+		config.setup({ log_level = "off", ui = { compose = { history_limit = 3 } } })
+		for _, payload in ipairs({ "first", "second", "third", "fourth" }) do
+			assert.is_true(history.add(payload))
+		end
+
+		local entries = assert(history.list())
+
+		assert.are.equal(3, #entries)
+		assert.are.equal("fourth", history.read(entries[1]))
+		assert.are.equal("third", history.read(entries[2]))
+		assert.are.equal("second", history.read(entries[3]))
+	end)
+
 	it("keeps large payloads outside the metadata index and loads one lazily", function()
 		local payload = "Review these changes\n" .. string.rep("+large diff line\n", 10000) .. "literal {file}"
 
@@ -127,6 +150,7 @@ end)
 
 describe("compose history action", function()
 	local MODULES = {
+		"wiremux",
 		"wiremux.action.history",
 		"wiremux.action.send",
 		"wiremux.config",
@@ -165,7 +189,7 @@ describe("compose history action", function()
 		helpers.clear(MODULES)
 	end)
 
-	it("lists metadata and reopens only the selected payload as literal compose", function()
+	it("lists metadata and reopens the selected payload through the public Lua API", function()
 		local entry = {
 			created_at = 0,
 			preview = "Review changes",
@@ -191,7 +215,7 @@ describe("compose history action", function()
 			sent = item
 		end
 
-		require("wiremux.action.history").history()
+		require("wiremux").history()
 
 		assert.matches("%[2%.0 KB%]", label)
 		assert.matches("Review changes", label)
@@ -230,6 +254,31 @@ describe("compose history action", function()
 		require("wiremux.action.history").history()
 
 		assert.matches("No compose history", warning)
+	end)
+
+	it("exposes history without loading the action until it is called", function()
+		local wiremux = require("wiremux")
+
+		assert.is_function(wiremux.history)
+		assert.is_nil(package.loaded["wiremux.action.history"])
+	end)
+
+	it("warns without opening a picker when public history is disabled", function()
+		mocks.config.opts.ui.compose.history_limit = 0
+		mocks.history.list = function()
+			return {}
+		end
+		mocks.picker.select = function()
+			error("disabled history must not open a picker")
+		end
+		local warning
+		mocks.notify.warn = function(message)
+			warning = message
+		end
+
+		require("wiremux").history()
+
+		assert.are.equal("Compose history is disabled", warning)
 	end)
 
 	it("registers the Wiremux history command", function()

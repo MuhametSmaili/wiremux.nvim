@@ -57,7 +57,7 @@ local M = {}
 
 ---@class wiremux.config.GlobalComposeConfig: wiremux.config.ComposeSessionConfig
 ---@field use_default_keymaps? boolean Enable shipped compose mappings (default: true)
----@field history_limit? integer Number of resolved compose sends retained on disk; 0 disables history (default: 4)
+---@field history_limit? integer Number of resolved compose sends retained on disk; 0 disables history (default: 0)
 
 ---@class wiremux.config.UserOptions
 ---@field log_level? wiremux.config.LogLevel
@@ -114,7 +114,7 @@ local defaults = {
 			style = "minimal",
 			close_behavior = "ask",
 			on_new_payload = "ask",
-			history_limit = 4,
+			history_limit = 0,
 			use_default_keymaps = true,
 			wo = {
 				wrap = true,

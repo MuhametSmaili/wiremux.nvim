@@ -186,8 +186,8 @@ describe("configuration", function()
 	end)
 
 	describe("compose history limit", function()
-		it("defaults to four retained sends", function()
-			assert.are.equal(4, config.opts.ui.compose.history_limit)
+		it("disables history by default", function()
+			assert.are.equal(0, config.opts.ui.compose.history_limit)
 		end)
 
 		it("accepts zero to disable history globally", function()

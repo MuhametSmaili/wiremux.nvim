@@ -46,6 +46,11 @@ function M.adopt(opts)
 	return require("wiremux.action.adopt").adopt(opts)
 end
 
+---Open saved Compose messages for recovery and reuse.
+function M.history()
+	return require("wiremux.action.history").history()
+end
+
 --- Send text via motion/textobject
 ---@param opts? wiremux.config.ActionConfig
 ---@return string
