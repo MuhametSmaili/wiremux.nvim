@@ -42,6 +42,12 @@ describe("configuration", function()
 			assert.are.same({ "n" }, bindings[1].modes)
 		end)
 
+		it("describes append-next as hiding before appending", function()
+			local bindings = keymaps.normalize(config.opts.ui.compose.keymaps.append_next)
+
+			assert.are.equal("Hide + append next", bindings[1].desc)
+		end)
+
 		it("navigates pages with normal-mode <C-p> and <C-n>", function()
 			assert.are.equal("<C-p>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.previous, "n"))
 			assert.are.equal("<C-n>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.next, "n"))
@@ -49,6 +55,10 @@ describe("configuration", function()
 
 		it("deletes the current page with normal-mode <C-x>", function()
 			assert.are.equal("<C-x>", keymaps.find_key_for_mode(config.opts.ui.compose.keymaps.delete_page, "n"))
+		end)
+
+		it("has no default discard binding", function()
+			assert.are.same({}, keymaps.normalize(config.opts.ui.compose.keymaps.discard))
 		end)
 
 		it("previews placeholders with normal-mode K", function()
@@ -67,6 +77,64 @@ describe("configuration", function()
 
 		it("asks before closing a draft", function()
 			assert.are.equal("ask", config.opts.ui.compose.close_behavior)
+		end)
+	end)
+
+	describe("compose footer", function()
+		it("enables the footer by default", function()
+			assert.is_true(config.opts.ui.compose.footer)
+		end)
+
+		it("accepts disabling the footer globally", function()
+			local normalized, errors = compose_config.normalize_global({ footer = false }, config.opts.ui.compose)
+
+			assert.are.same({}, errors)
+			assert.is_false(normalized.footer)
+		end)
+
+		it("accepts a footer setting in action defaults", function()
+			local normalized, errors = compose_config.normalize_action({ footer = false }, false)
+
+			assert.are.same({}, errors)
+			assert.is_false(normalized.footer)
+		end)
+
+		it("inherits a disabled footer at runtime", function()
+			local resolved, errors = compose_config.resolve({ footer = false }, true, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.is_false(resolved.footer)
+		end)
+
+		it("can enable a globally disabled footer for one send", function()
+			local resolved, errors = compose_config.resolve({ footer = false }, { footer = true }, "opts.compose")
+
+			assert.are.same({}, errors)
+			assert.is_true(resolved.footer)
+		end)
+
+		it("can disable an enabled footer for one send", function()
+			local resolved, errors = compose_config.resolve({ footer = true }, { footer = false }, "item.compose")
+
+			assert.are.same({}, errors)
+			assert.is_false(resolved.footer)
+		end)
+
+		it("falls back to the default for a non-boolean global footer", function()
+			local normalized, errors = compose_config.normalize_global({ footer = "false" }, config.opts.ui.compose)
+
+			assert.is_true(normalized.footer)
+			assert.are.equal(1, #errors)
+			assert.are.equal("ui.compose.footer", errors[1].path)
+		end)
+
+		it("rejects a non-boolean runtime footer", function()
+			local resolved, errors = compose_config.resolve(config.opts.ui.compose, { footer = 0 }, "opts.compose")
+
+			assert.is_nil(resolved)
+			assert.are.equal(1, #errors)
+			assert.are.equal("opts.compose.footer", errors[1].path)
+			assert.matches("must be a boolean", errors[1].message)
 		end)
 	end)
 

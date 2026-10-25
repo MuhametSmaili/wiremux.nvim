@@ -510,11 +510,135 @@ describe("compose UI", function()
 		end)
 	end)
 
+	describe("footer", function()
+		it("shows only send and close hints", function()
+			open("draft")
+
+			assert.are.equal(" Enter Send · q Close ", decoration("footer"))
+		end)
+
+		it("does not show normal-mode hints in Visual mode", function()
+			open("draft")
+			for _, key in ipairs({ "v", "V", "<C-v>" }) do
+				vim.api.nvim_feedkeys(vim.keycode(key), "xt", false)
+				local footer = decoration("footer")
+				vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "xt", false)
+
+				assert.are.equal("", footer)
+			end
+		end)
+
+		it("shows custom Visual-mode send hints", function()
+			open("draft", { config = { keymaps = { send = { "<F5>", mode = "x" } } } })
+			for _, key in ipairs({ "v", "V", "<C-v>" }) do
+				vim.api.nvim_feedkeys(vim.keycode(key), "xt", false)
+				local footer = decoration("footer")
+				vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "xt", false)
+
+				assert.are.equal(" <F5> Send ", footer)
+			end
+		end)
+
+		it("uses mapping modes for editor submodes", function()
+			local buf = open("draft", {
+				config = {
+					keymaps = {
+						send = {
+							{ "<F1>", mode = "n" },
+							{ "<F2>", mode = "i" },
+							{ "<F3>", mode = "x" },
+							{ "<F4>", mode = "s" },
+							{ "<F5>", mode = "o" },
+							{ "<F6>", mode = "c" },
+						},
+					},
+				},
+			})
+			for _, case in ipairs({
+				{ "no", "<F5>" },
+				{ "niI", "<F1>" },
+				{ "ic", "<F2>" },
+				{ "Rvc", "<F2>" },
+				{ "vs", "<F3>" },
+				{ "Vs", "<F3>" },
+				{ "\22s", "<F3>" },
+				{ "S", "<F4>" },
+				{ "\19", "<F4>" },
+				{ "cv", "<F6>" },
+			}) do
+				local original_mode = vim.fn.mode
+				vim.fn.mode = function()
+					return case[1]
+				end
+				local ok, err = pcall(vim.api.nvim_exec_autocmds, "ModeChanged", { buffer = buf })
+				vim.fn.mode = original_mode
+
+				assert.is_true(ok, tostring(err))
+				assert.are.equal(" " .. case[2] .. " Send ", decoration("footer"))
+			end
+		end)
+
+		it("hides the footer without disabling mappings", function()
+			open("draft", { config = { footer = false } })
+
+			assert.are.equal("", decoration("footer"))
+			assert.is_function(mapping("<CR>"))
+			assert.is_function(mapping("q"))
+		end)
+
+		it("updates footer visibility while preserving the draft", function()
+			local buf = open("draft")
+
+			open("ignored", { config = { on_new_payload = "keep", footer = false } })
+
+			assert.are.equal("", decoration("footer"))
+			assert.are.equal("draft", text())
+			assert.are.equal(buf, compose.get_buf())
+
+			open("ignored", { config = { on_new_payload = "keep", footer = true } })
+
+			assert.are.equal(" Enter Send · q Close ", decoration("footer"))
+		end)
+
+		it("keeps the footer hidden when resuming a hidden draft", function()
+			local buf = open("draft", { config = { footer = false } })
+			mapping("q")()
+
+			compose.open("")
+
+			assert.are.equal(buf, compose.get_buf())
+			assert.are.equal("", decoration("footer"))
+		end)
+	end)
+
 	describe("default keymap wiring", function()
 		before_each(function()
 			local config = require("wiremux.config")
 			config.setup({ log_level = "off" })
 			settings = config.opts.ui.compose
+		end)
+
+		it("does not install a shipped Q mapping", function()
+			local buf = open("draft")
+
+			assert.are_not.equal(1, buffer_mapping(buf, "Q").buffer)
+		end)
+
+		it("allows an explicit Q discard mapping", function()
+			local config = require("wiremux.config")
+			config.setup({ log_level = "off", ui = { compose = { keymaps = { discard = { "Q", mode = "n" } } } } })
+			settings = config.opts.ui.compose
+			local cancelled = false
+			local buf = open("draft", {
+				on_cancel = function()
+					cancelled = true
+				end,
+			})
+
+			mapping("Q")()
+
+			assert.is_true(cancelled)
+			assert.is_false(vim.api.nvim_buf_is_valid(buf))
 		end)
 
 		it("installs no main-buffer mappings when shipped defaults are disabled", function()
@@ -1553,12 +1677,12 @@ describe("compose UI", function()
 				config = {
 					keymaps = {
 						send = { "<F5>", mode = "n" },
-						discard = { "<F5>", mode = "n" },
+						close = { "<F5>", mode = "n" },
 					},
 				},
 			})
 
-			assert.matches("Discard", decoration("footer"))
+			assert.matches("Close", decoration("footer"))
 			assert.not_matches("Send", decoration("footer"))
 		end)
 

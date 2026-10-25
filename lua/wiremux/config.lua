@@ -29,6 +29,7 @@ local M = {}
 ---@field title? string Window title (default: " Compose Message ")
 ---@field border? string|string[] Border style (default: "rounded")
 ---@field style? string Window style (default: "minimal")
+---@field footer? boolean Show minimal Send/Close mapping hints (default: true)
 ---@field close_behavior? "ask"|"hide"|"discard" Behavior when close action is triggered (default: "ask")
 ---@field on_new_payload? "ask"|"keep"|"replace"|"append" Behavior when compose opens with a new payload while an unsent draft exists (default: "ask")
 ---@field wo? table<string, any> Window options (default: { wrap = true, number = false, relativenumber = false })
@@ -112,6 +113,7 @@ local defaults = {
 			title = " Compose Message ",
 			border = "rounded",
 			style = "minimal",
+			footer = true,
 			close_behavior = "ask",
 			on_new_payload = "ask",
 			history_limit = 0,
@@ -129,8 +131,8 @@ local defaults = {
 					{ "q", mode = "n", desc = "Close draft" },
 					{ "<Esc>", mode = "n", desc = "Close draft" },
 				},
-				append_next = { "<C-s>", mode = "n", desc = "Hide and append next payload" },
-				discard = { "Q", mode = "n", desc = "Discard compose page" },
+				append_next = { { "<C-s>", mode = "n", desc = "Hide + append next" } },
+				discard = {},
 				files = {
 					{ "<C-f>", mode = { "n", "i" }, desc = "Insert file" },
 				},

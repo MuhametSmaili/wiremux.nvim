@@ -107,6 +107,7 @@ require("wiremux").setup({
       title = " Compose Message ",
       border = "rounded",
       style = "minimal",
+      footer = true,
       close_behavior = "ask",
       on_new_payload = "ask",
       history_limit = 0,
@@ -122,8 +123,8 @@ require("wiremux").setup({
           { "q", mode = "n", desc = "Close draft" },
           { "<Esc>", mode = "n", desc = "Close draft" },
         },
-        append_next = { "<C-s>", mode = "n", desc = "Hide and append next payload" },
-        discard = { "Q", mode = "n", desc = "Discard compose page" },
+        append_next = { "<C-s>", mode = "n", desc = "Hide + append next" },
+        discard = {},
         files = { { "<C-f>", mode = { "n", "i" }, desc = "Insert file" } },
         delete_page = { "<C-x>", mode = "n", desc = "Delete compose page" },
         preview_placeholder = { "K", mode = "n", desc = "Preview placeholder" },
@@ -418,12 +419,15 @@ In insert mode, Enter adds a line.
 | `Ctrl+s`            | Normal           | Hide the draft and append the next Compose input. |
 | `Ctrl+p` / `Ctrl+n` | Normal           | Select the previous / next page.                  |
 | `Ctrl+x`            | Normal           | Delete the current page.                          |
-| `Q`                 | Normal           | Discard the current page.                         |
 | `K`                 | Normal           | Preview the placeholder under the cursor.         |
 | `Ctrl+f`            | Normal or insert | Insert a file reference.                          |
 
 If one page remains, `Ctrl+x` clears it without closing the draft.
-`Q` discards that page and closes the draft.
+Discard has no default key. Use `require("wiremux").compose.discard()` or assign a custom mapping.
+
+`Ctrl+s` affects only the next non-empty Compose input.
+Reopening the draft without new text does not consume it.
+It does not send a message or save history.
 
 Press `K` again to enter the preview. Press `q` or Escape there to close it.
 
@@ -657,13 +661,17 @@ See `:help wiremux-filters` for instance and definition filters.
 </details>
 
 <details>
-<summary>Compose keymaps</summary>
+<summary>Compose keymaps and footer</summary>
+
+The footer shows only the active Send and Close keys.
+Set `ui.compose.footer = false` to hide it without changing mappings.
 
 Map each action to one keymap or a list of keymaps:
 
 ```lua
 ui = {
   compose = {
+    footer = false,
     keymaps = {
       send = { { "<F5>", mode = { "n", "i" } } },
       close = { { "<Esc>", mode = "n" } },
@@ -682,6 +690,7 @@ Explicitly configured mappings still apply. This switch is global-only.
 
 Native replacements, option changes, and deletions survive draft refreshes.
 See `:help wiremux-compose-keymaps` for the full rules.
+See `:help wiremux-config-compose-footer` for footer overrides.
 
 </details>
 

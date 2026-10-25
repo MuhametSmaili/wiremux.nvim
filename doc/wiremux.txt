@@ -177,16 +177,22 @@ one paged draft. Use normal-mode `<C-p>` and `<C-n>` to navigate pages.
 `<C-x>` deletes the current page and moves to the next, wrapping to the first
 when necessary. With only one page, `<C-x>` clears its text instead.
 
-Normal-mode `<C-s>` saves and hides the draft, then appends the next non-empty
-compose payload. This one-time action bypasses `on_new_payload`. Reopening the
-draft without text does not consume it. `A` keeps its native append-at-end-of-line
+Normal-mode `<C-s>` hides the draft, then appends the next non-empty Compose
+payload. Its label is "Hide + append next". This one-time action bypasses
+`on_new_payload`. It does not send or record history. Reopening the draft
+without text does not consume it. `A` keeps its native append-at-end-of-line
 behavior. Press `<CR>` in normal mode to send; there is no default insert-mode
 send binding.
 
-`Q` discards. With more than one page it removes only the current page and keeps
-the others. With one page it drops the draft and closes the window, without the
-close prompt. The close paths always act on the whole draft: `close_behavior =
-"discard"` and the Discard answer in the close prompt remove every page.
+Discard has no default key. |wiremux.compose.discard()| removes the current
+page and keeps the others. With one page it drops the draft and closes the
+window, without the close prompt. To restore `Q`, add this entry under
+`ui.compose.keymaps`:
+>lua
+  discard = { "Q", mode = "n", desc = "Discard compose page" },
+<
+The close paths always act on the whole draft: `close_behavior = "discard"`
+and the Discard answer in the close prompt remove every page.
 
 Place the cursor on a placeholder and press normal-mode `K` to preview its
 value. Press `K` again to focus the read-only preview; use `q` or `<Esc>` to
@@ -221,6 +227,19 @@ adding a page or changing those values.
 Compose precedence is whole-value precedence: item `compose`, call options
 `compose`, then `actions.send.compose`. Tables are not merged across those
 levels. The selected table is merged over global session defaults.
+
+Compose footer ~
+                                         *wiremux-config-compose-footer*
+
+`ui.compose.footer` is a boolean, default true. The footer shows only the
+currently active Send and Close bindings owned by Wiremux. It uses the
+configured keys and omits hints for native replacements or deleted mappings.
+If neither action is mapped in the current mode, the footer is empty.
+
+Set `ui.compose.footer = false` to hide the footer without disabling mappings.
+The same field is supported in `actions.send.compose` and per-send/item
+`compose` tables. A runtime value overrides the global value; reopening a
+draft without text keeps its current footer setting.
 
 Compose keymaps ~
                                              *wiremux-compose-keymaps*
@@ -459,13 +478,14 @@ added marker, location, or command. String labels replace only the target name:
         on_new_payload = "append", -- "ask" | "keep" | "replace" | "append"
         history_limit = 0, -- off by default; set 3 to keep recent Compose messages
         use_default_keymaps = true, -- global only
+        footer = true, -- minimal Send/Close hints; false hides the footer
         keymaps = {
-          append_next = { "<C-s>", mode = "n" },
+          append_next = { "<C-s>", mode = "n", desc = "Hide + append next" },
           delete_page = { "<C-x>", mode = "n" },
           preview_placeholder = { "K", mode = "n" },
           previous = { "<C-p>", mode = "n" },
           next = { "<C-n>", mode = "n" },
-          discard = { "Q", mode = "n", desc = "Discard compose page" },
+          discard = { "Q", mode = "n", desc = "Discard compose page" }, -- opt-in
         },
       },
     },

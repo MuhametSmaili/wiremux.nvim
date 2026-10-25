@@ -169,23 +169,32 @@ end
 ---@param view wiremux.ui.ComposeView
 ---@return string
 local function footer_text(view)
-	local current_mode = vim.fn.mode() == "i" and "i" or "n"
+	if view.config.footer == false then
+		return ""
+	end
+	local mode = vim.fn.mode(1)
+	local current_mode = mode:sub(1, 2) == "no" and "o" or mode:sub(1, 1)
+	current_mode = ({
+		v = "x",
+		V = "x",
+		["\22"] = "x",
+		S = "s",
+		["\19"] = "s",
+		R = "i",
+	})[current_mode] or current_mode
 	local parts = {}
 	local entries = {
 		{ action = "send", label = "Send" },
 		{ action = "close", label = "Close" },
-		{ action = "append_next", label = "Append Next" },
-		{ action = "discard", label = "Discard" },
-		{ action = "files", label = "Files" },
-		{ action = "delete_page", label = "Delete Page" },
 	}
 	for _, item in ipairs(entries) do
 		local key = owned_key_for_action(view, item.action, current_mode)
 		if key then
-			table.insert(parts, key .. " " .. item.label)
+			local display_key = key == "<CR>" and "Enter" or key
+			table.insert(parts, display_key .. " " .. item.label)
 		end
 	end
-	return #parts > 0 and (" " .. table.concat(parts, "  |  ") .. " ") or ""
+	return #parts > 0 and (" " .. table.concat(parts, " · ") .. " ") or ""
 end
 
 ---@param win number

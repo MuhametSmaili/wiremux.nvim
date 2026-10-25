@@ -147,6 +147,7 @@ local session_fields = {
 	title = true,
 	border = true,
 	style = true,
+	footer = true,
 	close_behavior = true,
 	on_new_payload = true,
 	wo = true,
@@ -180,6 +181,12 @@ function M.options(options, path)
 				normalized[field] = value
 			else
 				table.insert(errors, validate.error(field_path, field_path .. " must be a number between 0.1 and 1"))
+			end
+		elseif field == "footer" then
+			if type(value) == "boolean" then
+				normalized.footer = value
+			else
+				table.insert(errors, validate.error(field_path, field_path .. " must be a boolean"))
 			end
 		elseif field == "title" then
 			if type(value) == "string" then

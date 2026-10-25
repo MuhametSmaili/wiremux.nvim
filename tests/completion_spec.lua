@@ -40,6 +40,7 @@ describe("placeholder completion", function()
 		local config = vim.deepcopy(require("wiremux.config").opts.ui.compose)
 		config.on_new_payload = "append"
 		config.close_behavior = "hide"
+		config.keymaps.discard = { "Q", mode = "n" } -- Explicit lifecycle fixture, not a shipped default.
 		compose.open(text, {
 			config = config,
 			source = { resolve = resolve ~= false, origin = origin },
